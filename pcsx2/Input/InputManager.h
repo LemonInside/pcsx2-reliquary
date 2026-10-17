@@ -52,7 +52,8 @@ enum class InputLayout : u8
 	Unknown,
 	Xbox,
 	Playstation,
-	Nintendo
+	Nintendo,
+	Generic
 };
 
 enum class InputModifier : u32
@@ -271,7 +272,9 @@ namespace InputManager
 
 	/// Updates internal state for any binds for this key, and fires callbacks as needed.
 	/// Returns true if anything was bound to this key, otherwise false.
-	bool InvokeEvents(InputBindingKey key, float value, GenericInputBinding generic_key = GenericInputBinding::Unknown);
+	bool InvokeEvents(InputBindingKey key, float value, GenericInputBinding generic_key = GenericInputBinding::Unknown,
+		GenericInputBinding axis_neg_key = GenericInputBinding::Unknown,
+		GenericInputBinding axis_pos_key = GenericInputBinding::Unknown);
 
 	/// Clears internal state for any binds with a matching source/index.
 	void ClearBindStateFromSource(InputBindingKey key);
@@ -303,6 +306,9 @@ namespace InputManager
 
 	/// Updates relative pointer position. Can call from the UI thread, use when host supports relative coordinate reporting.
 	void UpdatePointerRelativeDelta(u32 index, InputPointerAxis axis, float d, bool raw_input = false);
+
+	/// Returns true if a host pointer button is currently held.
+	bool IsPointerButtonPressed(u32 index, u32 button_index);
 
 	/// Updates host mouse mode (relative/cursor hiding).
 	void UpdateHostMouseMode();

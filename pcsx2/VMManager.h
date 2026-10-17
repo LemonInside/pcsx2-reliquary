@@ -32,13 +32,18 @@ struct VMBootParameters
 	std::string filename;
 	std::string elf_override;
 	std::string save_state;
+	std::string game_config;
 	std::optional<s32> state_index;
 	std::optional<CDVD_SourceType> source_type;
 
 	std::optional<bool> fast_boot;
 	std::optional<bool> fullscreen;
 
-	// For Python 2
+	// For Python 1/2
+	std::optional<bool> is_python1;
+	std::optional<u32> python1_crc;
+	std::optional<std::string> python1_serial;
+
 	std::optional<bool> is_python2;
 	std::optional<u32> python2_crc;
 	std::optional<std::string> python2_serial;
@@ -89,6 +94,10 @@ namespace VMManager
 
 	/// Returns the current state of the VM.
 	VMState GetState();
+
+	// Reserves offline HDD work and prevents boot until it finishes.
+	bool BeginHddImageOperation(Error* error);
+	void EndHddImageOperation();
 
 	/// Alters the current state of the VM.
 	void SetState(VMState state);
@@ -316,6 +325,9 @@ namespace VMManager
 		/// Returns true if fast booting is active (requested but ELF not started).
 		bool IsFastBootInProgress();
 
+		// Returns the current disc/BIOS region, if set.
+		std::string GetCurrentRegion();
+
 		/// Disables fast boot if it was requested, and found to be incompatible.
 		void DisableFastBoot();
 
@@ -329,7 +341,7 @@ namespace VMManager
 		void FrameRateChanged();
 
 		/// Throttles execution, or limits the frame rate.
-		void Throttle();
+		void Throttle(bool vsync_start);
 
 		/// Resets/clears all execution/code caches.
 		void ClearCPUExecutionCaches();

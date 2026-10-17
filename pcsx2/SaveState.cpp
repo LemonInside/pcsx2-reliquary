@@ -11,6 +11,8 @@
 #include "DebugTools/Breakpoints.h"
 #include "DebugTools/SymbolImporter.h"
 #include "Elfheader.h"
+#include "EEMemoryTiming.h"
+#include "FireWire/FireWire.h"
 #include "GS.h"
 #include "GS/GS.h"
 #include "Host.h"
@@ -67,7 +69,8 @@ static void PreLoadPrep()
 static void PostLoadPrep()
 {
 	resetCache();
-//	WriteCP0Status(cpuRegs.CP0.n.Status.val);
+	EEMemoryTiming::UpdateConfig(cpuRegs.CP0.n.Config);
+	EEMemoryTiming::ResetInstructionCache();
 	for (int i = 0; i < 48; i++)
 	{
 		if (std::memcmp(&s_tlb_backup[i], &tlb[i], sizeof(tlbs)) != 0)
@@ -632,6 +635,17 @@ public:
 	bool IsRequired() const override { return false; }
 };
 
+class SavestateEntry_FireWire final : public BaseSavestateEntry
+{
+public:
+	~SavestateEntry_FireWire() override = default;
+
+	const char* GetFilename() const override { return "FireWire.bin"; }
+	bool FreezeIn(zip_file_t* zf) const override { return SysState_ComponentFreezeInNew(zf, "FireWire", &FireWire::DoState); }
+	bool FreezeOut(SaveStateBase& writer) const override { return SysState_ComponentFreezeOutNew(writer, "FireWire", 1024 * 1024, &FireWire::DoState); }
+	bool IsRequired() const override { return false; }
+};
+
 class SavestateEntry_PAD final : public BaseSavestateEntry
 {
 public:
@@ -705,6 +719,7 @@ static const std::unique_ptr<BaseSavestateEntry> SavestateEntries[] = {
 	std::unique_ptr<BaseSavestateEntry>(new SavestateEntry_VU1prog),
 	std::unique_ptr<BaseSavestateEntry>(new SavestateEntry_SPU2),
 	std::unique_ptr<BaseSavestateEntry>(new SavestateEntry_USB),
+	std::unique_ptr<BaseSavestateEntry>(new SavestateEntry_FireWire),
 	std::unique_ptr<BaseSavestateEntry>(new SavestateEntry_PAD),
 	std::unique_ptr<BaseSavestateEntry>(new SavestateEntry_GS),
 	std::unique_ptr<BaseSavestateEntry>(new SaveStateEntry_Achievements),
@@ -926,8 +941,8 @@ static bool SaveState_ReadScreenshot(zip_t* zf, u32* out_width, u32* out_height,
 // --------------------------------------------------------------------------------------
 static bool SaveState_AddToZip(zip_t* zf, ArchiveEntryList* srclist, SaveStateScreenshotData* screenshot)
 {
-	u32 compression;
-	u32 compression_level;
+	u32 compression = ZIP_CM_DEFAULT;
+	u32 compression_level = 0;
 
 	if (EmuConfig.Savestate.CompressionType == SavestateCompressionMethod::Zstandard)
 	{
@@ -942,25 +957,13 @@ static bool SaveState_AddToZip(zip_t* zf, ArchiveEntryList* srclist, SaveStateSc
 		else if (EmuConfig.Savestate.CompressionRatio == SavestateCompressionLevel::VeryHigh)
 			compression_level = 22;
 	}
-	else if (EmuConfig.Savestate.CompressionType == SavestateCompressionMethod::Deflate64)
+	else if (EmuConfig.Savestate.CompressionType == SavestateCompressionMethod::Deflate)
 	{
-		compression = ZIP_CM_DEFLATE64;
+		compression = ZIP_CM_DEFLATE;
 		if (EmuConfig.Savestate.CompressionRatio == SavestateCompressionLevel::Low)
 			compression_level = 1;
 		else if (EmuConfig.Savestate.CompressionRatio == SavestateCompressionLevel::Medium)
-			compression_level = 3;
-		else if (EmuConfig.Savestate.CompressionRatio == SavestateCompressionLevel::High)
-			compression_level = 7;
-		else if (EmuConfig.Savestate.CompressionRatio == SavestateCompressionLevel::VeryHigh)
-			compression_level = 9;
-	}
-	else if (EmuConfig.Savestate.CompressionType == SavestateCompressionMethod::LZMA2)
-	{
-		compression = ZIP_CM_LZMA2;
-		if (EmuConfig.Savestate.CompressionRatio == SavestateCompressionLevel::Low)
-			compression_level = 1;
-		else if (EmuConfig.Savestate.CompressionRatio == SavestateCompressionLevel::Medium)
-			compression_level = 3;
+			compression_level = 5;
 		else if (EmuConfig.Savestate.CompressionRatio == SavestateCompressionLevel::High)
 			compression_level = 7;
 		else if (EmuConfig.Savestate.CompressionRatio == SavestateCompressionLevel::VeryHigh)
@@ -1006,7 +1009,9 @@ static bool SaveState_AddToZip(zip_t* zf, ArchiveEntryList* srclist, SaveStateSc
 			return false;
 		}
 
-		zip_set_file_compression(zf, fi, compression, compression_level);
+		// Don't compress the version indicator file so that builds that don't
+		// support a given compression method can at least still read it.
+		zip_set_file_compression(zf, fi, ZIP_CM_STORE, 0);
 	}
 
 	const uint listlen = srclist->GetLength();

@@ -1,31 +1,12 @@
 ﻿#include "ddr_extio.h"
+#include "../ddr-hardware.h"
+
+#include "common/Console.h"
 
 namespace usb_python2
 {
-	enum
-	{
-		EXTIO_LIGHT_PANEL_UP = 0x40,
-		EXTIO_LIGHT_PANEL_DOWN = 0x20,
-		EXTIO_LIGHT_PANEL_LEFT = 0x10,
-		EXTIO_LIGHT_PANEL_RIGHT = 0x08,
-
-		EXTIO_LIGHT_SENSOR_UP = 0x10,
-		EXTIO_LIGHT_SENSOR_DOWN = 0x18,
-		EXTIO_LIGHT_SENSOR_LEFT = 0x20,
-		EXTIO_LIGHT_SENSOR_RIGHT = 0x28,
-		EXTIO_LIGHT_SENSOR_ALL = 0x08,
-
-		EXTIO_LIGHT_NEON = 0x40,
-	};
-
-	uint32_t oldLightPad1 = 0;
-	uint32_t oldLightPad2 = 0;
-	uint32_t oldLightBass = 0;
-	uint32_t oldExtioState = 0;
-	bool isMinimaidConnected = false;
-	bool isUsingBtoolLights = false;
-
-	extio_device::extio_device()
+	extio_device::extio_device(DDRHardware& hardware)
+		: m_hardware(hardware)
 	{
 	}
 
@@ -35,15 +16,12 @@ namespace usb_python2
 		if (!isOpen)
 			return;
 
-#if PCSX2_DEVBUILD
-		printf("EXTIO packet: ");
-		for (int i = 0; i < packet.size(); i++)
-			printf("%02x ", packet[i]);
-		printf("\n");
-#endif
-
 		if (packet.size() != 4)
 			return;
+
+#if PCSX2_DEVBUILD
+		DevCon.WriteLn("EXTIO packet: %02x %02x %02x %02x", packet[0], packet[1], packet[2], packet[3]);
+#endif
 
 		/*
 		* DDR:
@@ -66,6 +44,8 @@ namespace usb_python2
 			//printf("EXTIO packet checksum invalid! %02x vs %02x\n", expectedChecksum, calculatedChecksum);
 			return;
 		}
+
+		m_hardware.SetExtioLights(packet[0], packet[1], packet[2]);
 
 		std::vector<uint8_t> response;
 		response.push_back(0x11);

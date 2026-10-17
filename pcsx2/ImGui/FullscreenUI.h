@@ -23,6 +23,7 @@ namespace FullscreenUI
 	void CheckForConfigChanges(const Pcsx2Config& old_config);
 	void OnVMStarted();
 	void OnVMDestroyed();
+	void OnVMResumed();
 	void GameChanged(std::string title, std::string path, std::string serial, u32 disc_crc, u32 crc);
 	void OpenPauseMenu();
 	bool OpenAchievementsWindow();
@@ -39,13 +40,13 @@ namespace FullscreenUI
 	void LocaleChanged();
 	void GamepadLayoutChanged();
 	void PreferEnglishGameListChanged();
+	void GameListFavoriteChanged();
 
 	void Shutdown(bool clear_state);
 	void Render();
 	void InvalidateCoverCache();
 	TinyString TimeToPrintableString(time_t t);
 	
-	bool CreateHardDriveWithProgress(const std::string& filePath, int sizeInGB, bool use48BitLBA = true);
 	void CancelAllHddOperations();
 } // namespace FullscreenUI
 

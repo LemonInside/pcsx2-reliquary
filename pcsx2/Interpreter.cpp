@@ -6,6 +6,7 @@
 #include "VMManager.h"
 #include "Elfheader.h"
 #include "Cache.h"
+#include "EEMemoryTiming.h"
 
 #include "DebugTools/Breakpoints.h"
 
@@ -77,6 +78,9 @@ void intBreakpoint(bool memcheck)
 		auto cond = CBreakPoints::GetBreakPointCondition(BREAKPOINT_EE, pc);
 		if (cond && !cond->Evaluate())
 			return;
+
+		if(!CBreakPoints::HandleBreakpointHit(BREAKPOINT_EE, pc))
+			return;
 	}
 
 	CBreakPoints::SetBreakpointTriggered(true, BREAKPOINT_EE);
@@ -96,10 +100,10 @@ void intMemcheck(u32 op, u32 bits, bool store)
 	start = standardizeBreakpointAddress(start);
 	const u32 end = start + bits/8;
 
-	auto checks = CBreakPoints::GetMemChecks(BREAKPOINT_EE);
+	const auto checks = CBreakPoints::GetMemChecks(BREAKPOINT_EE);
 	for (size_t i = 0; i < checks.size(); i++)
 	{
-		auto& check = checks[i];
+		const auto& check = checks[i];
 
 		if (check.result == 0)
 			continue;
@@ -169,6 +173,8 @@ static void execI()
 #endif
 
 	const u32 pc = cpuRegs.pc;
+	if (EmuConfig.Cpu.EnableEEInstructionCacheTiming)
+		cpuRegs.cycle += EEMemoryTiming::FetchInstruction(pc);
 	// We need to increase the pc before executing the memRead32. An exception could appears
 	// and it expects the PC counter to be pre-incremented
 	cpuRegs.pc += 4;
@@ -212,6 +218,11 @@ static void execI()
 
 
 	cpuBlockCycles += opcode.cycles * (2 - ((cpuRegs.CP0.n.Config >> 18) & 0x1));
+	if (EmuConfig.Cpu.EnableEERAMReadTiming && (opcode.flags & IS_LOAD))
+	{
+		const u32 address = cpuRegs.GPR.r[_Rs_].UL[0] + _Imm_;
+		cpuRegs.cycle += EEMemoryTiming::ReadWaitCycles[address >> EEMemoryTiming::PAGE_BITS];
+	}
 
 	opcode.interpret();
 }

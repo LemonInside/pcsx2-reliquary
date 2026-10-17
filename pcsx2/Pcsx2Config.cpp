@@ -537,6 +537,7 @@ void Pcsx2Config::RecompilerOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapBitBool(vu0ExtraOverflow);
 	SettingsWrapBitBool(vu0SignOverflow);
 	SettingsWrapBitBool(vu0Underflow);
+
 	SettingsWrapBitBool(vu1Overflow);
 	SettingsWrapBitBool(vu1ExtraOverflow);
 	SettingsWrapBitBool(vu1SignOverflow);
@@ -589,11 +590,20 @@ bool Pcsx2Config::CpuOptions::operator!=(const CpuOptions& right) const
 
 bool Pcsx2Config::CpuOptions::operator==(const CpuOptions& right) const
 {
-	return OpEqu(FPUFPCR) && OpEqu(FPUDivFPCR) && OpEqu(VU0FPCR) && OpEqu(VU1FPCR) && OpEqu(Recompiler);
+	return OpEqu(EnableEERAMReadTiming) && OpEqu(EnableEEInstructionCacheTiming) &&
+	       OpEqu(FPUSoftFloat) && OpEqu(VU0SoftFloat) && OpEqu(VU1SoftFloat) &&
+	       OpEqu(FPUFPCR) && OpEqu(FPUDivFPCR) && OpEqu(VU0FPCR) && OpEqu(VU1FPCR) &&
+	       OpEqu(Recompiler);
 }
 
 Pcsx2Config::CpuOptions::CpuOptions()
 {
+	ExtraMemory = false;
+	EnableEERAMReadTiming = false;
+	EnableEEInstructionCacheTiming = false;
+	FPUSoftFloat = false;
+	VU0SoftFloat = false;
+	VU1SoftFloat = false;
 	FPUFPCR = DEFAULT_FPU_FP_CONTROL_REGISTER;
 
 	// Rounding defaults to nearest to match old behavior.
@@ -602,7 +612,6 @@ Pcsx2Config::CpuOptions::CpuOptions()
 
 	VU0FPCR = DEFAULT_VU_FP_CONTROL_REGISTER;
 	VU1FPCR = DEFAULT_VU_FP_CONTROL_REGISTER;
-	ExtraMemory = false;
 }
 
 void Pcsx2Config::CpuOptions::ApplySanityCheck()
@@ -632,6 +641,11 @@ void Pcsx2Config::CpuOptions::LoadSave(SettingsWrapper& wrap)
 	read_fpcr(VU1FPCR, "VU1");
 
 	SettingsWrapBitBool(ExtraMemory);
+	SettingsWrapBitBool(EnableEERAMReadTiming);
+	SettingsWrapBitBool(EnableEEInstructionCacheTiming);
+	SettingsWrapBitBoolEx(FPUSoftFloat, "FPU.SoftFloat");
+	SettingsWrapBitBoolEx(VU0SoftFloat, "VU0.SoftFloat");
+	SettingsWrapBitBoolEx(VU1SoftFloat, "VU1.SoftFloat");
 
 	Recompiler.LoadSave(wrap);
 }
@@ -746,7 +760,8 @@ Pcsx2Config::GSOptions::GSOptions()
 	DisableShaderCache = false;
 	DisableFramebufferFetch = false;
 	DisableVertexShaderExpand = false;
-	SkipDuplicateFrames = false;
+	SkipDuplicateFrames = true;
+	AdvancedFrameDisplay = false;
 	OsdMessagesPos = OsdOverlayPos::TopLeft;
 	OsdPerformancePos = OsdOverlayPos::TopRight;
 	OsdShowSpeed = false;
@@ -757,6 +772,7 @@ Pcsx2Config::GSOptions::GSOptions()
 	OsdShowCPU = false;
 	OsdShowGPU = false;
 	OsdShowGPUDebug = false;
+	OsdShowGPUStats = false;
 	OsdShowIndicators = true;
 	OsdShowFrameTimes = false;
 	OsdShowHardwareInfo = false;
@@ -778,6 +794,10 @@ Pcsx2Config::GSOptions::GSOptions()
 	HWMipmap = true;
 	HWAccurateAlphaTest = false;
 	HWAA1 = false;
+	UseDebugBlend = false;
+	HWROV = false;
+	HWROVLogging = false;
+	HWROVBarriersVK = false;
 
 	ManualUserHacks = false;
 	UserHacks_AlignSpriteX = false;
@@ -879,6 +899,9 @@ bool Pcsx2Config::GSOptions::OptionsAreEqual(const GSOptions& right) const
 		OpEqu(UserHacks_TextureInsideRt) &&
 		OpEqu(UserHacks_Limit24BitDepth) &&
 		OpEqu(UserHacks_BilinearHack) &&
+		OpEqu(UserHacks_DrawBuffering) &&
+		OpEqu(UserHacks_RewriteLargeSTCoords) &&
+		OpEqu(UserHacks_TargetPageRearranging) &&
 		OpEqu(OverrideTextureBarriers) &&
 		OpEqu(DepthFeedbackMode) &&
 
@@ -894,6 +917,10 @@ bool Pcsx2Config::GSOptions::OptionsAreEqual(const GSOptions& right) const
 		OpEqu(SaveFrameStart) &&
 		OpEqu(SaveFrameCount) &&
 		OpEqu(SaveFrameBy) &&
+		OpEqu(DumpReplayLoopCount) &&
+		OpEqu(DumpReplayFrameStart) &&
+		OpEqu(DumpReplayFrameEnd) &&
+		OpEqu(SavedMetricsCaptureSeconds) &&
 
 		OpEqu(ExclusiveFullscreenControl) &&
 		OpEqu(ScreenshotSize) &&
@@ -921,7 +948,22 @@ bool Pcsx2Config::GSOptions::OptionsAreEqual(const GSOptions& right) const
 		OpEqu(PGSDisableMipmaps) &&
 		OpEqu(PGSDisableReadbackSync) &&
 		OpEqu(PGSSharpBackbuffer) &&
-		OpEqu(PGSBlendDemotion);
+		OpEqu(PGSBlendDemotion) &&
+		OpEqu(PGSTVEmulation) &&
+		OpEqu(PGSCable) &&
+		OpEqu(PGSCompositeDecode) &&
+		OpEqu(PGSDisableAutoProgressive) &&
+		OpEqu(PGSDisableCRTCEnhancements) &&
+		OpEqu(PGSPhosphorPrimaries) &&
+		OpEqu(PGSPhosphorGamma) &&
+		OpEqu(PGSDisplayCalibration) &&
+		OpEqu(PGSPaperWhite) &&
+		OpEqu(PGSHighRefreshInsertion) &&
+		OpEqu(PGSApertureGrille) &&
+		OpEqu(PGSPhosphorBloom) &&
+		OpEqu(PGSExposure) &&
+		OpEqu(PGSScanlineSharpness) &&
+		OpEqu(PGSScanlineBreathing);
 }
 
 bool Pcsx2Config::GSOptions::operator!=(const GSOptions& right) const
@@ -987,12 +1029,14 @@ void Pcsx2Config::GSOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapBitBool(DisableFramebufferFetch);
 	SettingsWrapBitBool(DisableVertexShaderExpand);
 	SettingsWrapBitBool(SkipDuplicateFrames);
+	SettingsWrapBitBool(AdvancedFrameDisplay);
 	SettingsWrapBitBool(OsdShowSpeed);
 	SettingsWrapBitBool(OsdShowFPS);
 	SettingsWrapBitBool(OsdShowVPS);
 	SettingsWrapBitBool(OsdShowCPU);
 	SettingsWrapBitBool(OsdShowGPU);
 	SettingsWrapBitBool(OsdShowGPUDebug);
+	SettingsWrapBitBool(OsdShowGPUStats);
 	SettingsWrapBitBool(OsdShowResolution);
 	SettingsWrapBitBool(OsdShowGSStats);
 	SettingsWrapBitBool(OsdShowIndicators);
@@ -1011,6 +1055,7 @@ void Pcsx2Config::GSOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapBitBool(HWSpinCPUForReadbacks);
 	SettingsWrapBitBoolEx(GPUPaletteConversion, "paltex");
 	SettingsWrapBitBoolEx(AutoFlushSW, "autoflush_sw");
+
 	SettingsWrapIntEnumEx(PGSSuperSampling, "pgsSuperSampling");
 	SettingsWrapBitBoolEx(PGSHighResScanout, "pgsHighResScanout");
 	SettingsWrapBitBoolEx(PGSSuperSampleTextures, "pgsSuperSampleTextures");
@@ -1018,6 +1063,22 @@ void Pcsx2Config::GSOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapBitBoolEx(PGSDisableReadbackSync, "pgsDisableReadbackSync");
 	SettingsWrapBitBoolEx(PGSSharpBackbuffer, "pgsSharpBackbuffer");
 	SettingsWrapBitBoolEx(PGSBlendDemotion, "pgsBlendDemotion");
+	SettingsWrapIntEnumEx(PGSTVEmulation, "pgsTVEmulation");
+	SettingsWrapIntEnumEx(PGSCable, "pgsCable");
+	SettingsWrapIntEnumEx(PGSCompositeDecode, "pgsCompositeDecode");
+	SettingsWrapBitBoolEx(PGSDisableAutoProgressive, "pgsDisableAutoProgressive");
+	SettingsWrapBitBoolEx(PGSDisableCRTCEnhancements, "pgsDisableCRTCEnhancements");
+	SettingsWrapIntEnumEx(PGSPhosphorPrimaries, "pgsPhosphorPrimaries");
+	SettingsWrapIntEnumEx(PGSPhosphorGamma, "pgsPhosphorGamma");
+	SettingsWrapIntEnumEx(PGSDisplayCalibration, "pgsDisplayCalibration");
+	SettingsWrapIntEnumEx(PGSPaperWhite, "pgsPaperWhite");
+	SettingsWrapBitBoolEx(PGSHighRefreshInsertion, "pgsHighRefreshInsertion");
+	SettingsWrapBitBoolEx(PGSApertureGrille, "pgsApertureGrille");
+	SettingsWrapIntEnumEx(PGSPhosphorBloom, "pgsPhosphorBloom");
+	SettingsWrapIntEnumEx(PGSExposure, "pgsExposure");
+	SettingsWrapIntEnumEx(PGSScanlineSharpness, "pgsScanlineSharpness");
+	SettingsWrapIntEnumEx(PGSScanlineBreathing, "pgsScanlineBreathing");
+
 	SettingsWrapBitBoolEx(PreloadFrameWithGSData, "preload_frame_with_gs_data");
 	SettingsWrapBitBoolEx(Mipmap, "mipmap");
 	SettingsWrapBitBoolEx(ManualUserHacks, "UserHacks");
@@ -1037,6 +1098,8 @@ void Pcsx2Config::GSOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapIntEnumEx(UserHacks_Limit24BitDepth, "UserHacks_Limit24BitDepth");
 	SettingsWrapBitBoolEx(UserHacks_EstimateTextureRegion, "UserHacks_EstimateTextureRegion");
 	SettingsWrapBitBoolEx(UserHacks_DrawBuffering, "UserHacks_DrawBuffering");
+	SettingsWrapBitBoolEx(UserHacks_RewriteLargeSTCoords, "UserHacks_RewriteLargeSTCoords");
+	SettingsWrapBitBoolEx(UserHacks_TargetPageRearranging, "UserHacks_TargetPageRearranging");
 	SettingsWrapBitBoolEx(FXAA, "fxaa");
 	SettingsWrapBitBool(ShadeBoost);
 	SettingsWrapBitBoolEx(DumpGSData, "DumpGSData");
@@ -1050,6 +1113,7 @@ void Pcsx2Config::GSOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapBitBoolEx(SaveDrawStats, "SaveDrawStats");
 	SettingsWrapBitBoolEx(SaveFrameStats, "SaveFrameStats");
 	SettingsWrapBitBoolEx(SaveHWConfig, "SaveHWConfig");
+	SettingsWrapBitBoolEx(DumpReplayUseFrameRange, "DumpReplayUseFrameRange");
 	SettingsWrapBitBool(DumpReplaceableTextures);
 	SettingsWrapBitBool(DumpReplaceableMipmaps);
 	SettingsWrapBitBool(DumpTexturesWithFMVActive);
@@ -1079,6 +1143,10 @@ void Pcsx2Config::GSOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapBitBoolEx(HWMipmap, "hw_mipmap");
 	SettingsWrapBitBool(HWAccurateAlphaTest);
 	SettingsWrapBitBool(HWAA1);
+	SettingsWrapBitBool(UseDebugBlend);
+	SettingsWrapBitBool(HWROV);
+	SettingsWrapBitBool(HWROVLogging);
+	SettingsWrapBitBool(HWROVBarriersVK);
 	SettingsWrapIntEnumEx(AccurateBlendingUnit, "accurate_blending_unit");
 	SettingsWrapIntEnumEx(TextureFiltering, "filter");
 	SettingsWrapIntEnumEx(TexturePreloading, "texture_preloading");
@@ -1120,6 +1188,10 @@ void Pcsx2Config::GSOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapBitfieldEx(SaveFrameStart, "SaveFrameStart");
 	SettingsWrapBitfieldEx(SaveFrameCount, "SaveFrameCount");
 	SettingsWrapBitfieldEx(SaveFrameBy, "SaveFrameBy");
+	SettingsWrapBitfieldEx(DumpReplayLoopCount, "DumpReplayLoopCount");
+	SettingsWrapBitfieldEx(DumpReplayFrameStart, "DumpReplayFrameStart");
+	SettingsWrapBitfieldEx(DumpReplayFrameEnd, "DumpReplayFrameEnd");
+	SettingsWrapBitfieldEx(SavedMetricsCaptureSeconds, "SavedMetricsCaptureSeconds");
 
 	SettingsWrapEntryEx(CaptureContainer, "CaptureContainer");
 	SettingsWrapEntryEx(VideoCaptureCodec, "VideoCaptureCodec");
@@ -1173,6 +1245,8 @@ void Pcsx2Config::GSOptions::MaskUserHacks()
 	UserHacks_Limit24BitDepth = GSLimit24BitDepth::Disabled;
 	UserHacks_EstimateTextureRegion = false;
 	UserHacks_DrawBuffering = false;
+	UserHacks_RewriteLargeSTCoords = false;
+	UserHacks_TargetPageRearranging = false;
 	UserHacks_TCOffsetX = 0;
 	UserHacks_TCOffsetY = 0;
 	UserHacks_CPUSpriteRenderBW = 0;
@@ -1218,10 +1292,12 @@ bool Pcsx2Config::GSOptions::ShouldDump(u64 draw, int frame) const
 static constexpr const std::array s_spu2_sync_mode_names = {
 	"Disabled",
 	"TimeStretch",
+	"LowLatency",
 };
 static constexpr const std::array s_spu2_sync_mode_display_names = {
 	TRANSLATE_NOOP("Pcsx2Config", "Disabled (Noisy)"),
 	TRANSLATE_NOOP("Pcsx2Config", "TimeStretch (Recommended)"),
+	TRANSLATE_NOOP("Pcsx2Config", "Low Latency (Resampling)"),
 };
 
 const char* Pcsx2Config::SPU2Options::GetSyncModeName(SPU2SyncMode mode)
@@ -1317,6 +1393,7 @@ bool Pcsx2Config::SPU2Options::operator==(const SPU2Options& right) const
 		   OpEqu(FastForwardVolume) &&
 		   OpEqu(OutputMuted) &&
 		   OpEqu(Backend) &&
+		   OpEqu(SyncMode) &&
 		   OpEqu(StreamParameters) &&
 		   OpEqu(DriverName) &&
 		   OpEqu(DeviceName);
@@ -1461,7 +1538,8 @@ bool Pcsx2Config::DEV9Options::operator==(const DEV9Options& right) const
 		   OpEqu(EthHosts) &&
 
 		   OpEqu(HddEnable) &&
-		   OpEqu(HddFile);
+		   OpEqu(HddFile) &&
+		   OpEqu(HddIdFile);
 }
 
 void Pcsx2Config::DEV9Options::LoadIPHelper(u8* field, const std::string& setting)
@@ -1740,6 +1818,8 @@ Pcsx2Config::SecurityOptions::SecurityOptions()
 	MgCardKeyStoreFile = "";
 	MgEncryptedKeyStoreFile = "";
 	MgKeyStoreKeyFile = "";
+	ArcadeKelfOverrideKbitFile = "";
+	ArcadeKelfOverrideKcFile = "";
 	NvRamFile = "";
 	ILinkIdFile = "";
 	MgKeyStoreMode = SecurityKeyStoreMode::Retail;
@@ -1769,6 +1849,8 @@ void Pcsx2Config::SecurityOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapEntry(MgCardKeyStoreFile);
 	SettingsWrapEntry(MgEncryptedKeyStoreFile);
 	SettingsWrapEntry(MgKeyStoreKeyFile);
+	SettingsWrapEntry(ArcadeKelfOverrideKbitFile);
+	SettingsWrapEntry(ArcadeKelfOverrideKcFile);
 
 	SettingsWrapEntry(NvRamFile);
 	SettingsWrapEntry(ILinkIdFile);
@@ -1783,7 +1865,8 @@ bool Pcsx2Config::SecurityOptions::operator!=(const SecurityOptions& right) cons
 
 bool Pcsx2Config::SecurityOptions::operator==(const SecurityOptions& right) const
 {
-	return OpEqu(MgChallengeIvFile) && OpEqu(MgCardKeyStoreFile) && OpEqu(MgEncryptedKeyStoreFile) && OpEqu(NvRamFile) && OpEqu(ILinkIdFile) && OpEqu(MgKeyStoreMode);
+	return OpEqu(MgChallengeIvFile) && OpEqu(MgCardKeyStoreFile) && OpEqu(MgEncryptedKeyStoreFile) && OpEqu(MgKeyStoreKeyFile) &&
+		OpEqu(ArcadeKelfOverrideKbitFile) && OpEqu(ArcadeKelfOverrideKcFile) && OpEqu(NvRamFile) && OpEqu(ILinkIdFile) && OpEqu(MgKeyStoreMode);
 }
 
 Pcsx2Config::FilenameOptions::FilenameOptions()
@@ -1795,6 +1878,7 @@ void Pcsx2Config::FilenameOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapSection("Filenames");
 
 	wrap.Entry(CURRENT_SETTINGS_SECTION, "BIOS", Bios, Bios);
+	wrap.Entry(CURRENT_SETTINGS_SECTION, "ArcadeBIOS", ArcadeBios, ArcadeBios);
 }
 
 bool Pcsx2Config::FilenameOptions::operator!=(const FilenameOptions& right) const
@@ -1804,7 +1888,7 @@ bool Pcsx2Config::FilenameOptions::operator!=(const FilenameOptions& right) cons
 
 bool Pcsx2Config::FilenameOptions::operator==(const FilenameOptions& right) const
 {
-	return OpEqu(Bios);
+	return OpEqu(Bios) && OpEqu(ArcadeBios);
 }
 
 Pcsx2Config::EmulationSpeedOptions::EmulationSpeedOptions()
@@ -2184,8 +2268,18 @@ std::string Pcsx2Config::FullpathToBios() const
 	return ret;
 }
 
+std::string Pcsx2Config::FullpathToArcadeBios() const
+{
+	std::string ret;
+	if (!BaseFilenames.ArcadeBios.empty())
+		ret = Path::Combine(EmuFolders::Bios, BaseFilenames.ArcadeBios);
+	return ret;
+}
+
 std::string Pcsx2Config::FullpathToMcd(uint slot) const
 {
+	if (Path::IsAbsolute(Mcd[slot].Filename))
+		return Mcd[slot].Filename;
 	return Path::Combine(EmuFolders::MemoryCards, Mcd[slot].Filename);
 }
 

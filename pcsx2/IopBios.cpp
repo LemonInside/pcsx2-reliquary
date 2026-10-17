@@ -7,6 +7,7 @@
 #include "IopMem.h"
 #include "R3000A.h"
 #include "R5900.h"
+#include "Sif.h"
 #include "ps2/BiosTools.h"
 #include "VMManager.h"
 
@@ -83,8 +84,9 @@ static std::string hostRoot;
 
 void Hle_SetHostRoot(const char* bootFilename)
 {
-	hostRoot = Path::ToNativePath(Path::GetDirectory(bootFilename));
-	Console.WriteLn("HLE Host: Set 'host:' root path to: %s\n", hostRoot.c_str());
+	std::string path = Path::RealPath(bootFilename);
+	hostRoot = Path::ToNativePath(Path::GetDirectory(path));
+	Console.WriteLn("HLE Host: Set 'host:' root path to: %s", hostRoot.c_str());
 }
 
 void Hle_ClearHostRoot()
@@ -929,7 +931,6 @@ namespace R3000A
 	{
 		int Kprintf_HLE()
 		{
-
 			// Emulate the expected Kprintf functionality:
 			iopMemWrite32(sp, a0);
 			iopMemWrite32(sp + 4, a1);

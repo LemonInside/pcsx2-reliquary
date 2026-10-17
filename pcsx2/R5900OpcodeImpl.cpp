@@ -704,6 +704,8 @@ void LD()
 	if (addr & 7) [[unlikely]]
 		RaiseAddressError(addr, false);
 
+	if (!_Rt_) return;
+
 	cpuRegs.GPR.r[_Rt_].UD[0] = memRead64(addr);
 }
 
@@ -924,13 +926,14 @@ void SYSCALL()
 			//Function "SetGsCrt(Interlace, Mode, Field)"
 			//Useful for fetching information of interlace/video/field display parameters of the Graphics Synthesizer
 
+			const u32 mode_arg = cpuRegs.GPR.n.a1.UC[0];
 			gsIsInterlaced = cpuRegs.GPR.n.a0.UL[0] & 1;
 			bool gsIsFrameMode = cpuRegs.GPR.n.a2.UL[0] & 1;
 			const char* inter = (gsIsInterlaced) ? "Interlaced" : "Progressive";
 			const char* field = (gsIsFrameMode) ? "FRAME" : "FIELD";
 			std::string mode;
 			// Warning info might be incorrect!
-			switch (cpuRegs.GPR.n.a1.UC[0])
+			switch (mode_arg)
 			{
 				case 0x0:
 				case 0x2:
@@ -973,10 +976,10 @@ void SYSCALL()
 					mode = "DVD PAL 720x480 @ ??.???"; gsSetVideoMode(GS_VideoMode::DVD_PAL); break;
 
 				default:
-					DevCon.Error("Mode %x is not supported. Report me upstream", cpuRegs.GPR.n.a1.UC[0]);
+					DevCon.Error("Mode %x is not supported. Report me upstream", mode_arg);
 					gsSetVideoMode(GS_VideoMode::Unknown);
 			}
-			DevCon.Warning("Set GS CRTC configuration. %s %s (%s)",mode.c_str(), inter, field);
+			DevCon.Warning("Set GS CRTC configuration. %s %s (%s)", mode.c_str(), inter, field);
 		}
 		break;
 		case Syscall::ExecPS2:

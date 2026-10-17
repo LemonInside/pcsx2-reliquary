@@ -28,8 +28,10 @@ namespace GameList
 		PS2Disc,
 		PS1Disc,
 		ELF,
+		Python1,
 		Python2,
 		Invalid,
+		DVDVideo,
 		Count
 	};
 
@@ -75,6 +77,7 @@ namespace GameList
 	{
 		EntryType type = EntryType::PS2Disc;
 		Region region = Region::Other;
+		bool is_favorite = false;
 
 		std::string path;
 		std::string serial;
@@ -102,7 +105,7 @@ namespace GameList
 
 		CompatibilityRating compatibility_rating = CompatibilityRating::Unknown;
 
-		__fi bool IsDisc() const { return (type == EntryType::PS1Disc || type == EntryType::PS2Disc); }
+		__fi bool IsDisc() const { return (type == EntryType::PS1Disc || type == EntryType::PS2Disc || type == EntryType::DVDVideo); }
 	};
 
 	const char* EntryTypeToString(EntryType type, bool translate);
@@ -135,6 +138,7 @@ namespace GameList
 
 	/// Looks up the serial and CRC for a game in the most efficient manner possible (i.e. cache or scan).
 	bool GetSerialAndCRCForFilename(const char* filename, std::string* serial, u32* crc);
+	void GetDVDVideoSerialAndCRCForPath(const std::string_view path, std::string* serial, u32* crc);
 
 	/// Add played time for the specified serial.
 	void AddPlayedTimeForSerial(const std::string& serial, std::time_t last_time, std::time_t add_time);
@@ -161,5 +165,6 @@ namespace GameList
 	void CheckCustomAttributesForPath(const std::string& path, bool& has_custom_title, bool& has_custom_region);
 	void SaveCustomTitleForPath(const std::string& path, const std::string& custom_title);
 	void SaveCustomRegionForPath(const std::string& path, int custom_region);
+	void SaveFavoriteForPath(const std::string& path, bool favorite);
 	std::string GetCustomTitleForPath(const std::string& path);
 } // namespace GameList

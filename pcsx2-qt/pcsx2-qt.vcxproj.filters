@@ -104,6 +104,9 @@
     <ClCompile Include="Settings\ControllerBindingWidget.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
+    <ClCompile Include="Settings\FireWireDeviceWidget.cpp">
+      <Filter>Settings</Filter>
+    </ClCompile>
     <ClCompile Include="Settings\ControllerGlobalSettingsWidget.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
@@ -114,6 +117,9 @@
       <Filter>Settings</Filter>
     </ClCompile>
     <ClCompile Include="Settings\MemoryCardSettingsWidget.cpp">
+      <Filter>Settings</Filter>
+    </ClCompile>
+    <ClCompile Include="Settings\AudioLatencySlider.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
     <ClCompile Include="Settings\AudioSettingsWidget.cpp">
@@ -132,6 +138,9 @@
       <Filter>Settings</Filter>
     </ClCompile>
     <ClCompile Include="Settings\HddCreateQt.cpp">
+      <Filter>Settings</Filter>
+    </ClCompile>
+    <ClCompile Include="Settings\Python1SettingsWidget.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
     <ClCompile Include="Settings\Python2SettingsWidget.cpp">
@@ -183,6 +192,7 @@
     </ClCompile>
     <ClCompile Include="ColorPickerButton.cpp" />
     <ClCompile Include="Themes.cpp" />
+    <ClCompile Include="ToolbarCustomizationDialog.cpp" />
     <ClCompile Include="Settings\GamePatchSettingsWidget.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
@@ -308,6 +318,9 @@
     <ClInclude Include="Settings\MemoryCardConvertWorker.h">
       <Filter>Settings</Filter>
     </ClInclude>
+    <ClInclude Include="Settings\AudioLatencySlider.h">
+      <Filter>Settings</Filter>
+    </ClInclude>
     <ClInclude Include="Settings\OsdFontPickerDialog.h">
       <Filter>Settings</Filter>
     </ClInclude>
@@ -370,7 +383,13 @@
     <QtMoc Include="Settings\ControllerBindingWidget.h">
       <Filter>Settings</Filter>
     </QtMoc>
+    <QtMoc Include="Settings\FireWireDeviceWidget.h">
+      <Filter>Settings</Filter>
+    </QtMoc>
     <QtMoc Include="Settings\ControllerGlobalSettingsWidget.h">
+      <Filter>Settings</Filter>
+    </QtMoc>
+    <QtMoc Include="Settings\Python1SettingsWidget.h">
       <Filter>Settings</Filter>
     </QtMoc>
     <QtMoc Include="Settings\GameSummaryWidget.h">
@@ -441,6 +460,7 @@
     </QtMoc>
     <QtMoc Include="ColorPickerButton.h" />
     <QtMoc Include="SetupWizardDialog.h" />
+    <QtMoc Include="ToolbarCustomizationDialog.h" />
     <QtMoc Include="Settings\GameCheatSettingsWidget.h">
       <Filter>Settings</Filter>
     </QtMoc>
@@ -535,6 +555,9 @@
     <QtMoc Include="Debugger\ModuleView.h">
       <Filter>Debugger</Filter>
     </QtMoc>
+    <QtMoc Include="Debugger\NavigationHistoryStack.h">
+      <Filter>Debugger</Filter>
+    </QtMoc>
     <QtMoc Include="Debugger\ModuleModel.h">
       <Filter>Debugger</Filter>
     </QtMoc>
@@ -605,6 +628,9 @@
     <QtUi Include="Settings\ControllerBindingWidget.ui">
       <Filter>Settings</Filter>
     </QtUi>
+    <QtUi Include="Settings\FireWireDeviceWidget.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
     <QtUi Include="Settings\ControllerBindingWidget_DualShock2.ui">
       <Filter>Settings</Filter>
     </QtUi>
@@ -663,6 +689,9 @@
       <Filter>Settings</Filter>
     </QtUi>
     <QtUi Include="Settings\DEV9SettingsWidget.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\Python1SettingsWidget.ui">
       <Filter>Settings</Filter>
     </QtUi>
     <QtUi Include="Settings\Python2SettingsWidget.ui">
@@ -797,6 +826,7 @@
     <QtUi Include="MainWindow.ui" />
     <QtUi Include="SetupWizardDialog.ui" />
     <QtUi Include="ShortcutCreationDialog.ui" />
+    <QtUi Include="ToolbarCustomizationDialog.ui" />
     <QtUi Include="Debugger\StackView.ui">
       <Filter>Debugger</Filter>
     </QtUi>

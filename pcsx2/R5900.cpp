@@ -3,6 +3,7 @@
 
 #include "Common.h"
 
+#include "common/Path.h"
 #include "common/StringUtil.h"
 #include "ps2/BiosTools.h"
 #include "R5900.h"
@@ -14,6 +15,7 @@
 #include "VMManager.h"
 
 #include "Hardware.h"
+#include "IopBios.h"
 #include "IPU/IPUdma.h"
 
 #include "Elfheader.h"
@@ -21,6 +23,7 @@
 #include "Patch.h"
 #include "GameDatabase.h"
 #include "GSDumpReplayer.h"
+#include "EEMemoryTiming.h"
 
 #include "DebugTools/Breakpoints.h"
 #include "DebugTools/MIPSAnalyst.h"
@@ -56,6 +59,12 @@ const int kMaxArgs = 16;
 uptr g_argPtrs[kMaxArgs];
 #define DEBUG_LAUNCHARG 0 // show lots of helpful console messages as the launch arguments are passed to the game
 
+static bool IsDvdVideoEELoadCommand(const std::string& elfname)
+{
+	return cdvd.DiscType == CDVD_TYPE_DVDV && elfname.find(' ') != std::string::npos &&
+		!R3000A::ioman::is_host(elfname) && !elfname.starts_with("cdrom:") && !elfname.starts_with("cdrom0:");
+}
+
 void cpuReset()
 {
 	std::memset(&cpuRegs, 0, sizeof(cpuRegs));
@@ -65,6 +74,8 @@ void cpuReset()
 
 	cpuRegs.pc				= 0xbfc00000; //set pc reg to stack
 	cpuRegs.CP0.n.Config	= 0x440;
+	EEMemoryTiming::UpdateConfig(cpuRegs.CP0.n.Config);
+	EEMemoryTiming::ResetInstructionCache();
 	cpuRegs.CP0.n.Status.val= 0x70400004; //0x10900000 <-- wrong; // COP0 enabled | BEV = 1 | TS = 1
 	cpuRegs.CP0.n.PRid		= 0x00002e20; // PRevID = Revision ID, same as R5900
 	fpuRegs.fprc[0]			= 0x00002e30; // fpu Revision..
@@ -671,13 +682,14 @@ void eeloadHook()
 		const std::string& elf_override = VMManager::Internal::GetELFOverride();
 		if (!elf_override.empty())
 		{
-			elfname = fmt::format("host:{}", elf_override);
+			// The host: root should be directory containg the elf, so get only the filename part
+			elfname = fmt::format("host:{}", Path::GetFileName(elf_override));
 		}
 		else
 		{
 			CDVDDiscType disc_type;
 			std::string disc_elf;
-			cdvdGetDiscInfo(nullptr, &disc_elf, nullptr, nullptr, &disc_type);
+			cdvdGetDiscInfo(nullptr, &disc_elf, nullptr, nullptr, nullptr, &disc_type);
 			if (disc_type == CDVDDiscType::PS2Disc)
 			{
 				// only allow fast boot for PS2 games
@@ -700,6 +712,7 @@ void eeloadHook()
 				{
 					// Overwrite OSDSYS with game's ELF name
 					strcpy((char*)PSM(g_osdsys_str), elfname.c_str());
+					break;
 				}
 			}
 		}
@@ -712,7 +725,10 @@ void eeloadHook()
 		}
 	}
 
-	VMManager::Internal::ELFLoadingOnCPUThread(std::move(elfname));
+	if (!IsDvdVideoEELoadCommand(elfname))
+	{
+		VMManager::Internal::ELFLoadingOnCPUThread(std::move(elfname));
+	}
 
 	if (CHECK_EXTRAMEM)
 	{

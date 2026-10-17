@@ -3,9 +3,11 @@
 
 #include "microVU.h"
 
+#include "VUops.h"
+
 #include "common/AlignedMalloc.h"
-#include "common/Perf.h"
-#include "common/StringUtil.h"
+
+static constexpr size_t mVUsoftDivCapTailReserve = 256;
 
 //------------------------------------------------------------------
 // Micro VU - Main Functions
@@ -24,13 +26,35 @@ void mVUinit(microVU& mVU, uint vuIndex)
 	mVU.progMemMask  =  mVU.progSize-1;
 	mVU.cache        = vuIndex ? SysMemory::GetVU1Rec() : SysMemory::GetVU0Rec();
 	mVU.prog.x86end  = (vuIndex ? SysMemory::GetVU1RecEnd() : SysMemory::GetVU0RecEnd()) - (mVUcacheSafeZone * _1mb);
+	// Keep the cold DIV cap fallback outside normal program allocation.
+	mVU.prog.x86end -= mVUsoftDivCapTailReserve;
 
 	mVU.regAlloc.reset(new microRegAlloc(mVU.index));
 }
 
 // Resets Rec Data
-void mVUreset(microVU& mVU, bool resetReserve)
+void mVUreset(microVU& mVU)
 {
+	const bool use_soft_float = CHECK_VU_SOFT(mVU.index);
+	const bool use_soft_madd_packed =
+		use_soft_float && g_cpu.vectorISA >= ProcessorFeatures::VectorISA::AVX2;
+
+	if (use_soft_float)
+	{
+		MicroVUSoftFloatTables::InitializeCorrectionTables();
+
+		if (!mVU.softBoothCache)
+			mVU.softBoothCache = std::make_unique<microVUSoftBoothCacheEntry[]>(mVUsoftBoothCacheSize);
+		if (!mVU.softSrtReciprocalCache)
+			mVU.softSrtReciprocalCache =
+				std::make_unique<microVUSoftUnaryCacheEntry[]>(mVUsoftLowerCacheSize);
+		if (!mVU.softDivCache)
+			mVU.softDivCache = std::make_unique<microVUSoftLowerCacheEntry[]>(mVUsoftLowerCacheSize);
+		if (!mVU.softSqrtCache)
+			mVU.softSqrtCache = std::make_unique<microVUSoftUnaryCacheEntry[]>(mVUsoftLowerCacheSize);
+		if (!mVU.softRsqrtCache)
+			mVU.softRsqrtCache = std::make_unique<microVUSoftLowerCacheSet[]>(mVUsoftLowerCacheSize);
+	}
 	if (THREAD_VU1)
 	{
 		DevCon.Warning("mVU Reset");
@@ -49,7 +73,29 @@ void mVUreset(microVU& mVU, bool resetReserve)
 	mVUGenerateWaitMTVU(mVU);
 	mVUGenerateCopyPipelineState(mVU);
 	mVUGenerateCompareState(mVU);
-
+	if (use_soft_float)
+	{
+		mVUGenerateSoftAddExactLaneKernel(mVU);
+		mVUGenerateSoftAddLaneRepairKernel(mVU);
+		mVUGenerateSoftMulExactKernel(mVU);
+		mVUGenerateSoftMulExactVectorKernel(mVU);
+		mVUGenerateSoftMulBoothPackedKernel(mVU);
+		if (use_soft_madd_packed)
+			mVUGenerateSoftMaddPackedKernels(mVU);
+		mVUGenerateSoftMaddIntegratedLaneKernel(mVU);
+		mVUGenerateSoftMaddExactVectorKernels(mVU);
+		mVUGenerateLowerSrtReciprocalSoftExactKernel(mVU);
+		const mVUSoftDivCapTailPatch div_cap_tail = mVUGenerateLowerDivSoftExactKernel(mVU);
+		mVUGenerateLowerSqrtSoftExactKernel(mVU);
+		mVUGenerateLowerRsqrtSoftExactKernel(mVU);
+		u8* const main_region_end = xGetPtr();
+		u8* const rec_end = mVU.index ? SysMemory::GetVU1RecEnd() : SysMemory::GetVU0RecEnd();
+		u8* const tail_begin = rec_end - mVUsoftDivCapTailReserve;
+		xSetPtr(tail_begin);
+		mVUGenerateLowerDivSoftCapTail(div_cap_tail);
+		pxAssert(static_cast<size_t>(xGetPtr() - tail_begin) <= mVUsoftDivCapTailReserve);
+		xSetPtr(main_region_end);
+	}
 	mVU.regs().nextBlockCycles = 0;
 	memset(&mVU.prog.lpState, 0, sizeof(mVU.prog.lpState));
 	mVU.profiler.Reset(mVU.index);
@@ -331,7 +377,7 @@ void recMicroVU1::Shutdown()
 
 void recMicroVU0::Reset()
 {
-	mVUreset(microVU0, true);
+	mVUreset(microVU0);
 }
 
 void recMicroVU0::Step()
@@ -342,7 +388,7 @@ void recMicroVU1::Reset()
 {
 	vu1Thread.WaitVU();
 	vu1Thread.Get_MTVUChanges();
-	mVUreset(microVU1, true);
+	mVUreset(microVU1);
 }
 
 void recMicroVU0::SetStartPC(u32 startPC)
@@ -418,68 +464,3 @@ bool SaveStateBase::vuJITFreeze()
 	Freeze(microVU1.prog.lpState);
 	return IsOkay();
 }
-
-#if 0
-
-#include <zlib.h>
-
-void DumpVUState(u32 n, u32 pc)
-{
-	const VURegs& r = vuRegs[n];
-	const microVU& mVU = (n == 0) ? microVU0 : microVU1;
-	static FILE* fp = nullptr;
-	static bool fp_opened = false;
-	static u32 counter = 0;
-
-	u32 first = pc >> 31;
-	pc &= 0x7FFFFFFFu;
-	if (first)
-		counter++;
-
-#if 0
-	if (counter == 184639 && pc == 0x0D70)
-		__debugbreak();
-#endif
-
-	if (counter < 0)
-		return;
-
-	if (!fp_opened)
-	{
-		fp = std::fopen("C:\\Dumps\\comp\\vulog.txt", "wb");
-		fp_opened = true;
-	}
-	if (fp)
-	{
-		const microVU& m = (n == 0) ? microVU0 : microVU1;
-		fprintf(fp, "%08d VU%u SPC:%04X xPC:%04X BRANCH:%04X VIBACKUP:%04X", counter, n, r.start_pc, pc, mVU.branch, mVU.VIbackup);
-#if 1
-		//fprintf(fp, " MEM:%08X", crc32(0, (Bytef*)r.Mem, (n == 0) ? VU0_MEMSIZE : VU1_MEMSIZE));
-		fprintf(fp, " MAC %08X %08X %08X %08X [%08X %08X %08X %08X]", r.micro_macflags[3], r.micro_macflags[2], r.micro_macflags[1], r.micro_macflags[0], m.macFlag[3], m.macFlag[2], m.macFlag[1], m.macFlag[0]);
-		fprintf(fp, " CLIP %08X %08X %08X %08X [%08X %08X %08X %08X]", r.micro_clipflags[3], r.micro_clipflags[2], r.micro_clipflags[1], r.micro_clipflags[0], m.clipFlag[3], m.clipFlag[2], m.clipFlag[1], m.clipFlag[0]);
-		fprintf(fp, " STATUS %08X %08X %08X %08X [%08X %08X %08X %08X]", r.micro_statusflags[3], r.micro_statusflags[2], r.micro_statusflags[1], r.micro_statusflags[0], m.statFlag[3], m.statFlag[2], m.statFlag[1], m.statFlag[0]);
-
-		for (u32 i = 0; i < 32; i++)
-		{
-			const VECTOR& v = r.VF[i];
-			fprintf(fp, " VF%u: %08X%08X%08X%08X (%f,%f,%f,%f)", i, v.UL[3], v.UL[2], v.UL[1], v.UL[0], v.F[3], v.F[2], v.F[1], v.F[0]);
-		}
-
-		for (u32 i = 0; i < 32; i++)
-		{
-			const REG_VI& v = r.VI[i];
-			fprintf(fp, " VI%u: %08X", i, v.UL);
-		}
-
-		fprintf(fp, " ACC: %08X%08X%08X%08X (%f,%f,%f,%f)", r.ACC.UL[3], r.ACC.UL[2], r.ACC.UL[1], r.ACC.UL[0],
-			r.ACC.F[3], r.ACC.F[2], r.ACC.F[1], r.ACC.F[0]);
-		fprintf(fp, " Q: %08X (%f)", r.q.UL, r.q.F);
-		fprintf(fp, " P: %08X (%f)\n", r.p.UL, r.p.F);
-#else
-		fprintf(fp, " REG:%08X\n", crc32(0, (Bytef*)&r, offsetof(VURegs, idx)));
-#endif
-		//fflush(fp);
-	}
-}
-
-#endif

@@ -18,6 +18,8 @@ AdvancedSettingsWidget::AdvancedSettingsWidget(SettingsWindow* settings_dialog, 
 
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.eeRecompiler, "EmuCore/CPU/Recompiler", "EnableEE", true);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.eeCache, "EmuCore/CPU/Recompiler", "EnableEECache", false);
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.eeRAMReadTiming, "EmuCore/CPU", "EnableEERAMReadTiming", false);
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.eeInstructionCacheTiming, "EmuCore/CPU", "EnableEEInstructionCacheTiming", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.eeINTCSpinDetection, "EmuCore/Speedhacks", "IntcStat", true);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.eeWaitLoopDetection, "EmuCore/Speedhacks", "WaitLoop", true);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.eeFastmem, "EmuCore/CPU/Recompiler", "EnableFastmem", true);
@@ -45,6 +47,10 @@ AdvancedSettingsWidget::AdvancedSettingsWidget(SettingsWindow* settings_dialog, 
 	connect(m_ui.eeClampMode, &QComboBox::currentIndexChanged, [this](int index) { setClampingMode(-1, index); });
 	connect(m_ui.vu0ClampMode, &QComboBox::currentIndexChanged, [this](int index) { setClampingMode(0, index); });
 	connect(m_ui.vu1ClampMode, &QComboBox::currentIndexChanged, [this](int index) { setClampingMode(1, index); });
+
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.eeSoftFloat, "EmuCore/CPU", "FPU.SoftFloat", false);
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.vu0SoftFloat, "EmuCore/CPU", "VU0.SoftFloat", false);
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.vu1SoftFloat, "EmuCore/CPU", "VU1.SoftFloat", false);
 
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_ui.iopRecompiler, "EmuCore/CPU/Recompiler", "EnableIOP", true);
 
@@ -82,6 +88,12 @@ AdvancedSettingsWidget::AdvancedSettingsWidget(SettingsWindow* settings_dialog, 
 	SettingWidgetBinder::BindWidgetToStringSetting(sif, m_ui.mgChallengeIvFile, "Security", "MgChallengeIvFile", "");
 	connect(m_ui.mgChallengeIvFileBrowse, &QPushButton::clicked, this, &AdvancedSettingsWidget::onBrowseClickedChallengeIvFile);
 
+	SettingWidgetBinder::BindWidgetToStringSetting(sif, m_ui.arcadeKelfOverrideKbitFile, "Security", "ArcadeKelfOverrideKbitFile", "");
+	connect(m_ui.arcadeKelfOverrideKbitBrowse, &QPushButton::clicked, this, &AdvancedSettingsWidget::onBrowseClickedArcadeKelfOverrideKbitFile);
+
+	SettingWidgetBinder::BindWidgetToStringSetting(sif, m_ui.arcadeKelfOverrideKcFile, "Security", "ArcadeKelfOverrideKcFile", "");
+	connect(m_ui.arcadeKelfOverrideKcBrowse, &QPushButton::clicked, this, &AdvancedSettingsWidget::onBrowseClickedArcadeKelfOverrideKcFile);
+
 	SettingWidgetBinder::BindWidgetToEnumSetting(sif, m_ui.mgKeyStoreMode, "Security", "MgKeyStoreMode", &Pcsx2Config::ParseSecurityKeyStoreMode, &Pcsx2Config::GetSecurityKeyStoreModeName, SecurityKeyStoreMode::Retail);
 
 	dialog()->registerWidgetHelp(m_ui.eeClampMode, tr("Clamping Mode"), tr("Normal (Default)"),
@@ -89,13 +101,21 @@ AdvancedSettingsWidget::AdvancedSettingsWidget(SettingsWindow* settings_dialog, 
 		   "The default value handles the vast majority of games; <b>modifying this setting when a game is not having a visible problem can cause instability.</b>"));
 
 	dialog()->registerWidgetHelp(m_ui.eeRecompiler, tr("Enable Recompiler"), tr("Checked"),
-		tr("Performs just-in-time binary translation of 64-bit MIPS-IV machine code to x86."));
+		tr("Performs just-in-time binary translation of 64-bit MIPS-IV machine code to native code."));
 
 	//: Wait loop: When the game makes the CPU do nothing (loop/spin) while it waits for something to happen (usually an interrupt).
 	dialog()->registerWidgetHelp(m_ui.eeWaitLoopDetection, tr("Wait Loop Detection"), tr("Checked"),
 		tr("Moderate speedup for some games, with no known side effects."));
 
-	dialog()->registerWidgetHelp(m_ui.eeCache, tr("Enable Cache (Slow)"), tr("Unchecked"), tr("Interpreter only, provided for diagnostic."));
+	dialog()->registerWidgetHelp(m_ui.eeCache, tr("Enable Cache (Slow)"), tr("Unchecked"),
+		tr("Enables emulation of the EE's hardware cache. Interpreter only, provided for diagnostics."));
+
+	dialog()->registerWidgetHelp(m_ui.eeRAMReadTiming, tr("Enable RAM Read Timing"), tr("Unchecked"),
+		tr("Emulates wait cycles for uncached EE main-memory reads using timings measured on a PS2. "
+		   "Works with both the interpreter and recompiler. Experimental; may affect game timing and performance."));
+	dialog()->registerWidgetHelp(m_ui.eeInstructionCacheTiming, tr("Enable Instruction Cache Timing"), tr("Unchecked"),
+		tr("Emulates EE instruction-cache misses and their wait cycles using timings measured on a PS2. "
+		   "Works with both the interpreter and recompiler. Experimental; may affect game timing and performance."));
 
 	//: INTC = Name of a PS2 register, leave as-is. "spin" = to make a cpu (or gpu) actively do nothing while you wait for something.  Like spinning in a circle, you're moving but not actually going anywhere.
 	dialog()->registerWidgetHelp(m_ui.eeINTCSpinDetection, tr("INTC Spin Detection"), tr("Checked"),
@@ -126,22 +146,31 @@ AdvancedSettingsWidget::AdvancedSettingsWidget(SettingsWindow* settings_dialog, 
 		tr("Changes how PCSX2 handles keeping floats in a standard x86 range in the Emotion Engine's Vector Unit 1 (EE VU1). "
 		   "The default value handles the vast majority of games; <b>modifying this setting when a game is not having a visible problem can cause instability.</b>"));
 
+	dialog()->registerWidgetHelp(m_ui.eeSoftFloat, tr("EE Software Float"), tr("Unchecked"),
+		tr("Uses software emulation for all EE FPU floating-point operations."));
+	dialog()->registerWidgetHelp(m_ui.vu0SoftFloat, tr("VU0 Software Float"), tr("Unchecked"),
+		tr("Uses software emulation for all VU0 floating-point operations."));
+	dialog()->registerWidgetHelp(m_ui.vu1SoftFloat, tr("VU1 Software Float"), tr("Unchecked"),
+		tr("Uses software emulation for all VU1 floating-point operations."));
+
 	dialog()->registerWidgetHelp(m_ui.instantVU1, tr("Enable Instant VU1"), tr("Checked"),
 		tr("Runs VU1 instantly. Provides a modest speed improvement in most games. "
 		   "Safe for most games, but a few games may exhibit graphical errors."));
 
 	//: VU0 = Vector Unit 0. One of the PS2's processors.
-	dialog()->registerWidgetHelp(m_ui.vu0Recompiler, tr("Enable VU0 Recompiler (Micro Mode)"), tr("Checked"), tr("Enables VU0 Recompiler."));
+	dialog()->registerWidgetHelp(m_ui.vu0Recompiler, tr("Enable VU0 Recompiler (Micro Mode)"), tr("Checked"),
+		tr("Performs just-in-time binary translation of Vector Unit 0 (VU0) microprograms to native code."));
 
 	//: VU1 = Vector Unit 1. One of the PS2's processors.
-	dialog()->registerWidgetHelp(m_ui.vu1Recompiler, tr("Enable VU1 Recompiler"), tr("Checked"), tr("Enables VU1 Recompiler."));
+	dialog()->registerWidgetHelp(m_ui.vu1Recompiler, tr("Enable VU1 Recompiler"), tr("Checked"),
+		tr("Performs just-in-time binary translation of Vector Unit 1 (VU1) microprograms to native code."));
 
 	dialog()->registerWidgetHelp(
 		//: mVU = PCSX2's recompiler for VU (Vector Unit) code (full name: microVU)
 		m_ui.vuFlagHack, tr("mVU Flag Hack"), tr("Checked"), tr("Good speedup and high compatibility, may cause graphical errors."));
 
 	dialog()->registerWidgetHelp(m_ui.iopRecompiler, tr("Enable Recompiler"), tr("Checked"),
-		tr("Performs just-in-time binary translation of 32-bit MIPS-I machine code to x86."));
+		tr("Performs just-in-time binary translation of 32-bit MIPS-I machine code to native code."));
 
 	dialog()->registerWidgetHelp(m_ui.gameFixes, tr("Enable Game Fixes"), tr("Checked"),
 		tr("Automatically loads and applies fixes to known problematic games on game start."));
@@ -159,9 +188,23 @@ AdvancedSettingsWidget::AdvancedSettingsWidget(SettingsWindow* settings_dialog, 
 		tr("Automatically saves the emulator state when powering down or exiting. You can then "
 		   "resume directly from where you left off next time."));
 
+	dialog()->registerWidgetHelp(m_ui.mgChallengeIvFile, tr("MagicGate Challenge IV File"), tr("civ.bin"), nullptr);
+	dialog()->registerWidgetHelp(m_ui.mgChallengeIvFileBrowse, tr("MagicGate Challenge IV File"), tr("civ.bin"), nullptr);
+	dialog()->registerWidgetHelp(m_ui.mgCardKeyStoreFile, tr("MagicGate Card Key Store File"), tr("cks.bin"), nullptr);
+	dialog()->registerWidgetHelp(m_ui.mgCardKeyStoreBrowse, tr("MagicGate Card Key Store File"), tr("cks.bin"), nullptr);
+	dialog()->registerWidgetHelp(m_ui.mgKeyStoreKeyFile, tr("MagicGate Key Store Key File"), tr("kek.bin"), nullptr);
+	dialog()->registerWidgetHelp(m_ui.mgKeyStoreKeyBrowse, tr("MagicGate Key Store Key File"), tr("kek.bin"), nullptr);
+	dialog()->registerWidgetHelp(m_ui.mgEncryptedKeyStoreFile, tr("MagicGate Encrypted Key Store File"), tr("eks.bin"), nullptr);
+	dialog()->registerWidgetHelp(m_ui.mgEncryptedKeyStoreBrowse, tr("MagicGate Encrypted Key Store File"), tr("eks.bin"), nullptr);
+
 	dialog()->registerWidgetHelp(m_ui.backupSaveStates, tr("Create Save State Backups"), tr("Checked"),
 		//: Do not translate the ".backup" extension.
 		tr("Creates a backup copy of a save state if it already exists when the save is created. The backup copy has a .backup suffix."));
+
+	dialog()->registerWidgetHelp(m_ui.pineEnable, tr("Enable PINE"), tr("Unchecked"),
+		tr("Enables the PINE Inter-Process Communication system, allowing external programs to interact with the emulator."));
+	dialog()->registerWidgetHelp(m_ui.pineSlot, tr("PINE Slot"), tr("28011"),
+		tr("The network port slot used for PINE IPC connections."));
 }
 
 AdvancedSettingsWidget::~AdvancedSettingsWidget() = default;
@@ -254,6 +297,16 @@ void AdvancedSettingsWidget::onBrowseClickedCardKeyStoreFile()
 void AdvancedSettingsWidget::onBrowseClickedKeyStoreKeyFile()
 {
 	onBrowseClicked(m_ui.mgKeyStoreKeyFile);
+}
+
+void AdvancedSettingsWidget::onBrowseClickedArcadeKelfOverrideKbitFile()
+{
+	onBrowseClicked(m_ui.arcadeKelfOverrideKbitFile);
+}
+
+void AdvancedSettingsWidget::onBrowseClickedArcadeKelfOverrideKcFile()
+{
+	onBrowseClicked(m_ui.arcadeKelfOverrideKcFile);
 }
 
 void AdvancedSettingsWidget::onBrowseClicked(QLineEdit* pathElement)

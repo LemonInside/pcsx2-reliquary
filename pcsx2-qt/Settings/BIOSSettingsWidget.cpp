@@ -33,11 +33,15 @@ BIOSSettingsWidget::BIOSSettingsWidget(SettingsWindow* settings_dialog, QWidget*
 	dialog()->registerWidgetHelp(m_ui.fastBootFastForward, tr("Fast Forward Boot"), tr("Unchecked"),
 		tr("Removes emulation speed throttle until the game starts to reduce startup time."));
 
+	dialog()->registerWidgetHelp(m_ui.searchDirectory, tr("BIOS Directory"), tr("Default"),
+		tr("The directory searched by PCSX2 to detect valid PlayStation 2 BIOS ROM images."));
+
 	refreshList();
 
 	connect(m_ui.searchDirectory, &QLineEdit::textChanged, this, &BIOSSettingsWidget::refreshList);
 	connect(m_ui.refresh, &QPushButton::clicked, this, &BIOSSettingsWidget::refreshList);
-	connect(m_ui.fileList, &QTreeWidget::currentItemChanged, this, &BIOSSettingsWidget::listItemChanged);
+	connect(m_ui.retailFileList, &QTreeWidget::currentItemChanged, this, &BIOSSettingsWidget::retailListItemChanged);
+	connect(m_ui.arcadeFileList, &QTreeWidget::currentItemChanged, this, &BIOSSettingsWidget::arcadeListItemChanged);
 	connect(m_ui.fastBoot, &QCheckBox::checkStateChanged, this, &BIOSSettingsWidget::fastBootChanged);
 
 	fastBootChanged();
@@ -48,12 +52,13 @@ BIOSSettingsWidget::~BIOSSettingsWidget() = default;
 void BIOSSettingsWidget::refreshList()
 {
 	const std::string search_dir = m_ui.searchDirectory->text().toStdString();
-	populateList(m_ui.fileList, search_dir);
+	populateList(m_ui.retailFileList, search_dir, "BIOS");
+	populateList(m_ui.arcadeFileList, search_dir, "ArcadeBIOS");
 }
 
-void BIOSSettingsWidget::populateList(QTreeWidget* list, const std::string& directory)
+void BIOSSettingsWidget::populateList(QTreeWidget* list, const std::string& directory, const char* setting_key)
 {
-	const std::string selected_bios = Host::GetBaseStringSettingValue("Filenames", "BIOS");
+	const std::string selected_bios = Host::GetBaseStringSettingValue("Filenames", setting_key);
 	const QString res_path = QtHost::GetResourcesBasePath();
 
 	QSignalBlocker blocker(list);
@@ -132,12 +137,25 @@ void BIOSSettingsWidget::populateList(QTreeWidget* list, const std::string& dire
 	list->setEnabled(true);
 }
 
-void BIOSSettingsWidget::listItemChanged(const QTreeWidgetItem* current, const QTreeWidgetItem* previous)
+static void SetBiosListSelection(const QTreeWidgetItem* current, const char* setting_key)
 {
-	Host::SetBaseStringSettingValue("Filenames", "BIOS", current->text(0).toUtf8().constData());
+	if (!current)
+		return;
+
+	Host::SetBaseStringSettingValue("Filenames", setting_key, current->text(0).toUtf8().constData());
 	Host::CommitBaseSettingChanges();
 
 	g_emu_thread->applySettings();
+}
+
+void BIOSSettingsWidget::retailListItemChanged(const QTreeWidgetItem* current, const QTreeWidgetItem* previous)
+{
+	SetBiosListSelection(current, "BIOS");
+}
+
+void BIOSSettingsWidget::arcadeListItemChanged(const QTreeWidgetItem* current, const QTreeWidgetItem* previous)
+{
+	SetBiosListSelection(current, "ArcadeBIOS");
 }
 
 void BIOSSettingsWidget::fastBootChanged()

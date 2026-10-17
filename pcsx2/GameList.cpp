@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "CDVD/CDVD.h"
+#include "CDVD/CueFileReader.h"
 #include "Elfheader.h"
 #include "GameList.h"
 #include "Host.h"
 #include "INISettingsInterface.h"
+#include "USB/USB.h"
 #include "VMManager.h"
 
 #include "common/Assertions.h"
@@ -25,6 +27,7 @@
 #include <cstdio>
 #include <ctime>
 #include <fstream>
+#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -37,7 +40,7 @@ namespace GameList
 	enum : u32
 	{
 		GAME_LIST_CACHE_SIGNATURE = 0x45434C47,
-		GAME_LIST_CACHE_VERSION = 34,
+		GAME_LIST_CACHE_VERSION = 40,
 
 
 		PLAYED_TIME_SERIAL_LENGTH = 32,
@@ -56,17 +59,26 @@ namespace GameList
 	using PlayedTimeMap = UnorderedStringMap<PlayedTimeEntry>;
 
 	static bool IsScannableFilename(const std::string_view path);
+	static std::string GetPathKey(const std::string_view path);
+	static UnorderedStringSet FindCueDataFiles(const FileSystem::FindResultsArray& files);
 
 	static bool GetIsoSerialAndCRC(const std::string& path, s32* disc_type, std::string* serial, u32* crc);
 	static Region ParseDatabaseRegion(const std::string_view db_region);
 	static bool GetElfListEntry(const std::string& path, GameList::Entry* entry);
 	static bool GetIsoListEntry(const std::string& path, GameList::Entry* entry);
+	static bool GetPython1ListEntry(const std::string& path, GameList::Entry* entry);
 	static bool GetPython2ListEntry(const std::string& path, GameList::Entry* entry);
+	static std::string GetRelativeGameIniPath(const std::string& path, const INISettingsInterface& ini, const char* key);
+	static std::string CleanPythonGameId(std::string_view game_id);
+	static std::string CleanPython1BootromGameIdField(const u8* data, u32 length);
+	static std::optional<std::string> GetPython1BootromGameId(const std::string& bootrom_path);
+	static u32 HashPathForUniqueId(const std::string_view path);
 
 	static bool GetGameListEntryFromCache(const std::string& path, GameList::Entry* entry);
 	static void ScanDirectory(const char* path, bool recursive, bool only_cache, const std::vector<std::string>& excluded_paths,
 		const PlayedTimeMap& played_time_map, const INISettingsInterface& custom_attributes_ini, ProgressCallback* progress);
-	static bool AddFileFromCache(const std::string& path, std::time_t timestamp, const PlayedTimeMap& played_time_map);
+	static bool AddFileFromCache(const std::string& path, std::time_t timestamp, const PlayedTimeMap& played_time_map,
+		const INISettingsInterface& custom_attributes_ini);
 	static bool ScanFile(std::string path, std::time_t timestamp, std::unique_lock<std::recursive_mutex>& lock,
 		const PlayedTimeMap& played_time_map, const INISettingsInterface& custom_attributes_ini);
 
@@ -101,8 +113,10 @@ const char* GameList::EntryTypeToString(EntryType type, bool translate)
 		TRANSLATE_NOOP("GameList", "PS2 Disc"),
 		TRANSLATE_NOOP("GameList", "PS1 Disc"),
 		TRANSLATE_NOOP("GameList", "ELF"),
+		TRANSLATE_NOOP("GameList", "Python 1"),
 		TRANSLATE_NOOP("GameList", "Python 2"),
 		TRANSLATE_NOOP("GameList", "Invalid"),
+		TRANSLATE_NOOP("GameList", "DVD-Video"),
 	};
 
 	const char* name = names.at(static_cast<int>(type));
@@ -233,18 +247,52 @@ bool GameList::IsScannableFilename(const std::string_view path)
 	return VMManager::IsDiscFileName(path) || VMManager::IsElfFileName(path);
 }
 
+std::string GameList::GetPathKey(const std::string_view path)
+{
+#ifdef _WIN32
+	return StringUtil::toLower(Path::Canonicalize(path));
+#else
+	return Path::Canonicalize(path);
+#endif
+}
+
+UnorderedStringSet GameList::FindCueDataFiles(const FileSystem::FindResultsArray& files)
+{
+	UnorderedStringSet paths;
+	for (const FILESYSTEM_FIND_DATA& file : files)
+	{
+		if (!StringUtil::EndsWithNoCase(file.FileName, ".cue"))
+			continue;
+
+		CueFileReader cue;
+		if (!cue.Open(file.FileName, nullptr))
+			continue;
+
+		for (const std::string& path : cue.GetDataFiles())
+			paths.emplace(GetPathKey(path));
+	}
+
+	return paths;
+}
+
 void GameList::FillBootParametersForEntry(VMBootParameters* params, const Entry* entry)
 {
+	params->is_python1 = false;
+	params->python1_crc = 0;
+	params->python1_serial = "";
 	params->is_python2 = false;
 	params->python2_crc = 0;
 	params->python2_serial = "";
 	params->python2_patch_file = "";
 
-	if (entry->type == GameList::EntryType::PS1Disc || entry->type == GameList::EntryType::PS2Disc)
+	if (entry->type == GameList::EntryType::PS1Disc || entry->type == GameList::EntryType::PS2Disc || entry->type == GameList::EntryType::DVDVideo)
 	{
 		params->filename = entry->path;
 		params->source_type = CDVD_SourceType::Iso;
 		params->elf_override.clear();
+
+		if (entry->type == GameList::EntryType::DVDVideo)
+			params->fast_boot = false;
 	}
 	else if (entry->type == GameList::EntryType::ELF)
 	{
@@ -252,11 +300,19 @@ void GameList::FillBootParametersForEntry(VMBootParameters* params, const Entry*
 		params->source_type = params->filename.empty() ? CDVD_SourceType::NoDisc : CDVD_SourceType::Iso;
 		params->elf_override = entry->path;
 	}
-	else if (entry->type == GameList::EntryType::Python2)
+	else if (entry->type == GameList::EntryType::Python1 || entry->type == GameList::EntryType::Python2)
 	{
 		params->filename.clear();
 		params->source_type = CDVD_SourceType::NoDisc;
 		params->elf_override.clear();
+
+		if (entry->type == GameList::EntryType::Python1)
+		{
+			params->is_python1 = true;
+			params->python1_crc = entry->crc;
+			params->python1_serial = entry->serial;
+			return;
+		}
 
 		params->is_python2 = true;
 		params->python2_crc = entry->crc;
@@ -288,6 +344,93 @@ void GameList::FillBootParametersForEntry(VMBootParameters* params, const Entry*
 	}
 }
 
+std::string GameList::GetRelativeGameIniPath(const std::string& path, const INISettingsInterface& ini, const char* key)
+{
+	std::string value;
+	ini.GetStringValue("Game", key, &value);
+	if (!value.empty() && !Path::IsAbsolute(value))
+	{
+		const std::string real_path = Path::RealPath(path);
+		const std::string base_path = real_path.empty() ? path : real_path;
+		value = std::string(Path::Canonicalize(Path::Combine(Path::GetDirectory(base_path), value)));
+	}
+	return value;
+}
+
+u32 GameList::HashPathForUniqueId(const std::string_view path)
+{
+	u32 hash = 2166136261u;
+	for (const char ch : path)
+	{
+		hash ^= static_cast<u8>(std::tolower(static_cast<unsigned char>(ch)));
+		hash *= 16777619u;
+	}
+	return hash ? hash : 1u;
+}
+
+void GameList::GetDVDVideoSerialAndCRCForPath(const std::string_view path, std::string* serial, u32* crc)
+{
+	const u32 path_crc = HashPathForUniqueId(path);
+	*serial = fmt::format("DVDV-{:08X}", path_crc);
+	*crc = path_crc;
+}
+
+std::string GameList::CleanPythonGameId(std::string_view game_id)
+{
+	std::string ret;
+	ret.reserve(game_id.length());
+	for (const char ch : game_id)
+	{
+		if (std::isalnum(static_cast<unsigned char>(ch)))
+			ret.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+	}
+	return ret;
+}
+
+std::optional<std::string> GameList::GetPython1BootromGameId(const std::string& bootrom_path)
+{
+	static constexpr u32 SECURITY_SLOT_START = 0xf020;
+	static constexpr u32 SECURITY_SLOT_END = 0xf100;
+	static constexpr u32 SECURITY_SLOT_SIZE = 0x20;
+	static constexpr u32 SECURITY_CODE_OFFSET = 0;
+	static constexpr u32 SECURITY_CODE_LENGTH = 8;
+	static constexpr u32 SECURITY_REGION_OFFSET = 0x0a;
+	static constexpr u32 SECURITY_REGION_LENGTH = 3;
+
+	if (bootrom_path.empty())
+		return std::nullopt;
+
+	std::FILE* file = FileSystem::OpenCFile(bootrom_path.c_str(), "rb");
+	if (!file)
+		return std::nullopt;
+
+	std::array<u8, SECURITY_SLOT_END - SECURITY_SLOT_START> security_data;
+	const bool read_ok = FileSystem::FSeek64(file, SECURITY_SLOT_START, SEEK_SET) == 0 &&
+		std::fread(security_data.data(), 1, security_data.size(), file) == security_data.size();
+	std::fclose(file);
+	if (!read_ok)
+		return std::nullopt;
+
+	for (u32 slot = SECURITY_SLOT_START; slot < SECURITY_SLOT_END; slot += SECURITY_SLOT_SIZE)
+	{
+		const u8* const slot_data = security_data.data() + (slot - SECURITY_SLOT_START);
+		if (std::all_of(slot_data, slot_data + 0x10, [](u8 value) { return value == 0xff; }))
+			continue;
+
+		const std::string code = CleanPython1BootromGameIdField(slot_data + SECURITY_CODE_OFFSET, SECURITY_CODE_LENGTH);
+		const std::string region = CleanPython1BootromGameIdField(slot_data + SECURITY_REGION_OFFSET, SECURITY_REGION_LENGTH);
+		if (code.length() >= 5 && region.length() == SECURITY_REGION_LENGTH)
+			return code + region;
+	}
+
+	return std::nullopt;
+}
+
+std::string GameList::CleanPython1BootromGameIdField(const u8* data, u32 length)
+{
+	return CleanPythonGameId(std::string_view(reinterpret_cast<const char*>(data), length));
+}
+
 bool GameList::GetIsoSerialAndCRC(const std::string& path, s32* disc_type, std::string* serial, u32* crc)
 {
 	Error error;
@@ -302,7 +445,15 @@ bool GameList::GetIsoSerialAndCRC(const std::string& path, s32* disc_type, std::
 
 	// TODO: we could include the version in the game list?
 	*disc_type = DoCDVDdetectDiskType();
-	cdvdGetDiscInfo(serial, nullptr, nullptr, crc, nullptr);
+	if (*disc_type == CDVD_TYPE_DVDV)
+	{
+		serial->clear();
+		*crc = 0;
+	}
+	else
+	{
+		cdvdGetDiscInfo(serial, nullptr, nullptr, nullptr, crc, nullptr);
+	}
 	DoCDVDclose();
 	return true;
 }
@@ -437,6 +588,10 @@ bool GameList::GetIsoListEntry(const std::string& path, GameList::Entry* entry)
 			entry->type = EntryType::PS2Disc;
 			break;
 
+		case CDVD_TYPE_DVDV:
+			entry->type = EntryType::DVDVideo;
+			break;
+
 		case CDVD_TYPE_ILLEGAL:
 		default:
 		{
@@ -454,6 +609,13 @@ bool GameList::GetIsoListEntry(const std::string& path, GameList::Entry* entry)
 	entry->path = path;
 	entry->total_size = sd.Size;
 	entry->compatibility_rating = CompatibilityRating::Unknown;
+	if (entry->type == EntryType::DVDVideo)
+	{
+		GetDVDVideoSerialAndCRCForPath(path, &entry->serial, &entry->crc);
+		entry->title = Path::GetFileTitle(path);
+		entry->region = Region::Other;
+		return true;
+	}
 
 	if (const GameDatabaseSchema::GameEntry* db_entry = GameDatabase::findGame(entry->serial))
 	{
@@ -473,6 +635,99 @@ bool GameList::GetIsoListEntry(const std::string& path, GameList::Entry* entry)
 }
 
 // clang-format off
+bool GameList::GetPython1ListEntry(const std::string& path, GameList::Entry* entry)
+{
+	std::unique_ptr<INISettingsInterface> new_interface = std::make_unique<INISettingsInterface>(path);
+	if (!new_interface->Load())
+	{
+		Console.Error("Failed to parse Python 1 game entry ini '%s'", new_interface->GetFileName().c_str());
+		return false;
+	}
+
+	const std::string hdd_image_path = GetRelativeGameIniPath(path, *new_interface, "HddImagePath");
+	const std::string cf_image_path = GetRelativeGameIniPath(path, *new_interface, "CfImagePath");
+	const std::string bbsram_path = GetRelativeGameIniPath(path, *new_interface, "BbsRamPath");
+	const std::string io_bootrom_path = GetRelativeGameIniPath(path, *new_interface, "IoBootRomPath");
+	const std::string io_config_rom_path = GetRelativeGameIniPath(path, *new_interface, "IoConfigRomPath");
+	const std::string internal_dongle_path = GetRelativeGameIniPath(path, *new_interface, "InternalDonglePath");
+	const std::string external_dongle_path = GetRelativeGameIniPath(path, *new_interface, "ExternalDonglePath");
+	const std::string memory_card_dongle_path = GetRelativeGameIniPath(path, *new_interface, "MemoryCardDonglePath");
+	const std::string memory_card_id_path = GetRelativeGameIniPath(path, *new_interface, "MemoryCardIdPath");
+	std::string io_mode = new_interface->GetStringValue("Game", "IoMode", "JVS");
+	if (StringUtil::Strcasecmp(io_mode.c_str(), "EXTIO") == 0)
+		io_mode = "EXTIO";
+	else if (StringUtil::Strcasecmp(io_mode.c_str(), "POPN") == 0)
+		io_mode = "POPN";
+	else if (StringUtil::Strcasecmp(io_mode.c_str(), "PPOOL") == 0)
+		io_mode = "PPOOL";
+	else if (StringUtil::Strcasecmp(io_mode.c_str(), "B22") == 0)
+		io_mode = "B22";
+	else if (StringUtil::Strcasecmp(io_mode.c_str(), "DOGSTATIONDX") == 0)
+		io_mode = "DOGSTATIONDX";
+	else
+		io_mode = "JVS";
+
+	std::string game_title = new_interface->GetStringValue("Game", "Name", path.c_str());
+	const std::optional<std::string> bootrom_game_id = GetPython1BootromGameId(io_bootrom_path);
+	std::string game_id = CleanPythonGameId(new_interface->GetStringValue("Game", "GameId"));
+	const bool has_explicit_game_id = !game_id.empty();
+	if (game_id.empty())
+		game_id = bootrom_game_id.value_or("PYTHON100001");
+	u32 forced_crc = 0;
+	if (!new_interface->GetUIntValue("Game", "UniqueId", &forced_crc))
+		forced_crc = (has_explicit_game_id || bootrom_game_id.has_value()) ? HashPathForUniqueId(game_id) : HashPathForUniqueId(path);
+	std::string region = new_interface->GetStringValue("Game", "Region", "NTSC-J");
+
+	entry->path = path;
+	entry->serial = game_id;
+	entry->crc = forced_crc;
+	entry->title = game_title;
+	entry->type = EntryType::Python1;
+	entry->compatibility_rating = CompatibilityRating::Unknown;
+	entry->region = ParseDatabaseRegion(region);
+
+	std::string filename(VMManager::GetGameSettingsPath(entry->serial, entry->crc));
+	std::unique_ptr<INISettingsInterface> sif = std::make_unique<INISettingsInterface>(std::move(filename));
+	if (FileSystem::FileExists(sif->GetFileName().c_str()))
+		sif->Load();
+
+	sif->SetStringValue("Python1/Game", "HddImageFile", hdd_image_path.c_str());
+	sif->SetStringValue("Python1/Game", "CfImageFile", cf_image_path.c_str());
+	sif->SetStringValue("Python1/Game", "BbsRamFile", bbsram_path.c_str());
+	sif->SetStringValue("Python1/Game", "IoBootRomFile", io_bootrom_path.c_str());
+	sif->SetStringValue("Python1/Game", "IoConfigRomFile", io_config_rom_path.c_str());
+	sif->SetStringValue("Python1/Game", "InternalDongleFile", internal_dongle_path.c_str());
+	sif->SetStringValue("Python1/Game", "ExternalDongleFile", external_dongle_path.c_str());
+	sif->SetStringValue("Python1/Game", "MemoryCardDongleFile", memory_card_dongle_path.c_str());
+	sif->SetStringValue("Python1/Game", "MemoryCardIdFile", memory_card_id_path.c_str());
+	sif->SetStringValue("Python1/Game", "IoMode", io_mode.c_str());
+	sif->SetBoolValue("DEV9/Hdd", "HddEnable", false);
+	sif->SetStringValue("DEV9/Hdd", "HddFile", "");
+	sif->SetStringValue("Security", "MgKeyStoreMode", Pcsx2Config::GetSecurityKeyStoreModeName(SecurityKeyStoreMode::Arcade));
+	sif->SetBoolValue("EmuCore/Gamefixes", "OPHFlagHack", io_mode != "PPOOL"); // OPH Hack seems to help all these titles except perfect pool
+	sif->SetBoolValue("MemoryCards", "Slot1_Enable", true);
+	sif->SetStringValue("MemoryCards", "Slot1_Filename", memory_card_dongle_path.c_str());
+	sif->SetStringValue("MemoryCards", "Slot1_KeySource", Pcsx2Config::McdOptions::KeySourceNames[static_cast<size_t>(MemoryCardKeySource::Arcade)]);
+	sif->SetStringValue("MemoryCards", "Slot1_Key", Pcsx2Config::McdOptions::KeyNames[static_cast<size_t>(MemoryCardKey::Arcade)]);
+	if (io_mode == "PPOOL")
+	{
+		USB::SetConfigDevice(*sif, 0, "trackball");
+		USB::SetConfigDevice(*sif, 1, "perfectpoolcamera");
+	}
+
+	const std::string slot2_filename = sif->GetStringValue("MemoryCards", "Slot2_Filename");
+	if (!memory_card_dongle_path.empty() && slot2_filename == memory_card_dongle_path)
+	{
+		sif->DeleteValue("MemoryCards", "Slot2_Enable");
+		sif->DeleteValue("MemoryCards", "Slot2_Filename");
+		sif->DeleteValue("MemoryCards", "Slot2_KeySource");
+		sif->DeleteValue("MemoryCards", "Slot2_Key");
+	}
+	sif->Save();
+
+	return true;
+}
+
 bool GameList::GetPython2ListEntry(const std::string& path, GameList::Entry* entry)
 {
 	std::unique_ptr<INISettingsInterface> new_interface = std::make_unique<INISettingsInterface>(std::move(path));
@@ -509,12 +764,17 @@ bool GameList::GetPython2ListEntry(const std::string& path, GameList::Entry* ent
 	}
 
 	std::string game_title = new_interface->GetStringValue("Game", "Name", path.c_str());
-	uint32_t forced_crc = new_interface->GetUIntValue("Game", "UniqueId", rand());
-	std::string forced_serial = new_interface->GetStringValue("Game", "GameSerial", "KNAC00001");
+	std::string game_id = CleanPythonGameId(new_interface->GetStringValue("Game", "GameId"));
+	const bool has_explicit_game_id = !game_id.empty();
+	if (game_id.empty())
+		game_id = "KNAC00001";
+	u32 forced_crc = 0;
+	if (!new_interface->GetUIntValue("Game", "UniqueId", &forced_crc))
+		forced_crc = has_explicit_game_id ? HashPathForUniqueId(game_id) : HashPathForUniqueId(path);
 	std::string region = new_interface->GetStringValue("Game", "Region", "NTSC-J");
 
 	entry->path = path;
-	entry->serial = forced_serial;
+	entry->serial = game_id;
 	entry->crc = forced_crc;
 	entry->title = game_title;
 	entry->type = EntryType::Python2;
@@ -637,6 +897,8 @@ bool GameList::PopulateEntryFromPath(const std::string& path, GameList::Entry* e
 {
 	if (VMManager::IsElfFileName(path.c_str()))
 		return GetElfListEntry(path, entry);
+	else if (StringUtil::EndsWithNoCase(path.c_str(), ".py1"))
+		return GetPython1ListEntry(path, entry);
 	else if (StringUtil::EndsWithNoCase(path.c_str(), ".py2"))
 		return GetPython2ListEntry(path, entry);
 	else
@@ -899,6 +1161,7 @@ void GameList::ScanDirectory(const char* path, bool recursive, bool only_cache, 
 		recursive ? (FILESYSTEM_FIND_FILES | FILESYSTEM_FIND_HIDDEN_FILES | FILESYSTEM_FIND_RECURSIVE) :
 					(FILESYSTEM_FIND_FILES | FILESYSTEM_FIND_HIDDEN_FILES),
 		&files, progress);
+	const UnorderedStringSet cue_data_files = FindCueDataFiles(files);
 
 	u32 files_scanned = 0;
 	progress->SetProgressRange(static_cast<u32>(files.size()));
@@ -908,13 +1171,15 @@ void GameList::ScanDirectory(const char* path, bool recursive, bool only_cache, 
 	{
 		files_scanned++;
 
-		if (progress->IsCancelled() || !GameList::IsScannableFilename(ffd.FileName) || IsPathExcluded(excluded_paths, ffd.FileName))
+		if (progress->IsCancelled() || !GameList::IsScannableFilename(ffd.FileName) || IsPathExcluded(excluded_paths, ffd.FileName) ||
+			cue_data_files.contains(GetPathKey(ffd.FileName)))
 		{
 			continue;
 		}
 
 		std::unique_lock lock(s_mutex);
-		if (GetEntryForPath(ffd.FileName.c_str()) || AddFileFromCache(ffd.FileName, ffd.ModificationTime, played_time_map) || only_cache)
+		if (GetEntryForPath(ffd.FileName.c_str()) ||
+			AddFileFromCache(ffd.FileName, ffd.ModificationTime, played_time_map, custom_attributes_ini) || only_cache)
 		{
 			continue;
 		}
@@ -929,7 +1194,8 @@ void GameList::ScanDirectory(const char* path, bool recursive, bool only_cache, 
 	progress->PopState();
 }
 
-bool GameList::AddFileFromCache(const std::string& path, std::time_t timestamp, const PlayedTimeMap& played_time_map)
+bool GameList::AddFileFromCache(const std::string& path, std::time_t timestamp, const PlayedTimeMap& played_time_map,
+	const INISettingsInterface& custom_attributes_ini)
 {
 	Entry entry;
 	if (!GetGameListEntryFromCache(path, &entry) || entry.last_modified_time != timestamp)
@@ -945,6 +1211,7 @@ bool GameList::AddFileFromCache(const std::string& path, std::time_t timestamp, 
 		entry.last_played_time = iter->second.last_played_time;
 		entry.total_played_time = iter->second.total_played_time;
 	}
+	entry.is_favorite = custom_attributes_ini.GetBoolValue(EncodeIniKey(entry.path).c_str(), "Favorite", false);
 
 	s_entries.push_back(std::move(entry));
 	return true;
@@ -998,6 +1265,7 @@ bool GameList::ScanFile(std::string path, std::time_t timestamp, std::unique_loc
 			entry.region = static_cast<Region>(custom_region_value);
 		}
 	}
+	entry.is_favorite = custom_attributes_ini.GetBoolValue(EncodeIniKey(entry.path).c_str(), "Favorite", false);
 
 	lock.lock();
 
@@ -1155,8 +1423,13 @@ bool GameList::GetSerialAndCRCForFilename(const char* filename, std::string* ser
 {
 	if (const GameList::Entry* entry = GetEntryForPath(filename); entry)
 	{
-		*serial = entry->serial;
-		*crc = entry->crc;
+		if (entry->type == EntryType::DVDVideo && entry->serial.empty())
+			GetDVDVideoSerialAndCRCForPath(filename, serial, crc);
+		else
+		{
+			*serial = entry->serial;
+			*crc = entry->crc;
+		}
 		return true;
 	}
 
@@ -1413,9 +1686,15 @@ std::string GameList::FormatTimestamp(std::time_t timestamp)
 		}
 		else
 		{
+#ifdef _WIN32
+			wchar_t buf[128];
+			std::wcsftime(buf, std::size(buf), L"%x", &ttime);
+			ret = StringUtil::WideStringToUTF8String(buf);
+#else
 			char buf[128];
 			std::strftime(buf, std::size(buf), "%x", &ttime);
 			ret.assign(buf);
+#endif
 		}
 	}
 
@@ -1552,6 +1831,12 @@ bool GameList::DownloadCovers(const std::vector<std::string>& url_templates, boo
 	if (!has_title && !has_file_title && !has_serial)
 	{
 		progress->DisplayError("URL template must contain at least one of ${title}, ${filetitle}, or ${serial}.");
+		return false;
+	}
+
+	if (!FileSystem::CreateDirectoryPath(EmuFolders::Covers.c_str(), false))
+	{
+		progress->DisplayError(fmt::format("Failed to create covers directory: {}", EmuFolders::Covers).c_str());
 		return false;
 	}
 
@@ -1709,6 +1994,33 @@ void GameList::SaveCustomRegionForPath(const std::string& path, int custom_regio
 		// Let the cache update by rescanning
 		RescanPath(path);
 	}
+}
+
+void GameList::SaveFavoriteForPath(const std::string& path, bool favorite)
+{
+	INISettingsInterface custom_attributes_ini(GetCustomPropertiesFile());
+	custom_attributes_ini.Load();
+	const std::string key(EncodeIniKey(path));
+	if (favorite)
+		custom_attributes_ini.SetBoolValue(key.c_str(), "Favorite", true);
+	else
+		custom_attributes_ini.DeleteValue(key.c_str(), "Favorite");
+
+	if (!custom_attributes_ini.Save())
+		return;
+
+	{
+		std::unique_lock lock(s_mutex);
+		for (Entry& entry : s_entries)
+		{
+			if (entry.path == path)
+			{
+				entry.is_favorite = favorite;
+				break;
+			}
+		}
+	}
+	Host::OnGameListFavoriteChanged(path);
 }
 
 std::string GameList::GetCustomTitleForPath(const std::string& path)

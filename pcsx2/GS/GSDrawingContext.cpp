@@ -49,7 +49,7 @@ static int findmax(int tl, int br, int limit, int wm, int minuv, int maxuv)
 
 static int reduce(int uv, int size)
 {
-	while (size > 3 && (1 << (size - 1)) >= uv)
+	while (size > 3 && (1 << (size - 1)) > uv)
 	{
 		size--;
 	}
@@ -59,7 +59,7 @@ static int reduce(int uv, int size)
 
 static int extend(int uv, int size)
 {
-	while (size < 10 && (1 << size) < uv)
+	while (size < 10 && (1 << size) <= uv)
 	{
 		size++;
 	}
@@ -91,11 +91,11 @@ void GSDrawingContext::UpdateScissor()
 	scissor.in = rscissor + GSVector4i::cxpr(0, 0, 1, 1);
 
 	// Fixed-point scissor min/max, used for rejecting primitives which are entirely outside.
-	scissor.cull = rscissor.sll32<4>();
+	// Add half a pixel around the edges for upscaling and lines/points.
+	scissor.cull = rscissor.sll32<4>() + GSVector4i(-8, -8, 8, 8);
 
-	// Offset applied to vertices for culling, zw is for native resolution culling
-	// We want to round subpixels down, because at least one pixel gets filled per scanline.
-	scissor.xyof = GSVector4i::loadl(&XYOFFSET.U64).xyxy().sub32(GSVector4i::cxpr(0, 0, 15, 15));
+	// Offset applied to vertices for culling.
+	scissor.xyof = GSVector4i::loadl(&XYOFFSET.U64).xyxy();
 }
 
 GIFRegTEX0 GSDrawingContext::GetSizeFixedTEX0(const GSVector4& st, bool linear, bool mipmap) const

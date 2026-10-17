@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "ImGui/ImGuiManager.h"
+#include "FireWire/FireWire.h"
 #include "Input/InputManager.h"
 #include "Input/InputSource.h"
 #include "SIO/Pad/Pad.h"
@@ -108,13 +109,15 @@ namespace InputManager
 	static float ApplySingleBindingScale(float sensitivity, float deadzone, float value);
 
 	static void AddHotkeyBindings(SettingsInterface& si, bool is_profile);
-	static void AddPadBindings(SettingsInterface& si, u32 pad, bool is_profile);
+	static void AddPadBindings(SettingsInterface& si, u32 pad, bool is_profile, SettingsInterface* nav_si);
 	static void AddUSBBindings(SettingsInterface& si, u32 port, bool is_profile);
+	static void AddFireWireBindings(SettingsInterface& si, bool is_profile);
 	static void UpdateContinuedVibration();
 	static void GenerateRelativeMouseEvents();
 
 	static bool DoEventHook(InputBindingKey key, float value);
-	static bool PreprocessEvent(InputBindingKey key, float value, GenericInputBinding generic_key);
+	static bool PreprocessEvent(InputBindingKey key, float value, GenericInputBinding generic_key,
+		GenericInputBinding axis_neg_key, GenericInputBinding axis_pos_key);
 	static bool ProcessEvent(InputBindingKey key, float value, bool skip_button_handlers);
 
 	template <typename T>
@@ -131,6 +134,13 @@ using VibrationBindingArray = std::vector<PadVibrationBinding>;
 static BindingMap s_binding_map;
 static VibrationBindingArray s_pad_vibration_array;
 static std::mutex s_binding_map_write_lock;
+
+// Reverse lookups for controller navigation; user bindings take priority over static defaults.
+using ControllerButtonGenericMap = std::unordered_map<InputBindingKey, GenericInputBinding, InputBindingKeyHash>;
+static ControllerButtonGenericMap s_controller_button_generic_map;
+
+using ControllerAxisGenericMap = std::unordered_map<InputBindingKey, std::array<GenericInputBinding, 2>, InputBindingKeyHash>;
+static ControllerAxisGenericMap s_controller_axis_generic_map;
 
 // Hooks/intercepting (for setting bindings)
 static std::mutex m_event_intercept_mutex;
@@ -161,11 +171,13 @@ static constexpr const std::array<const char*, 3> s_pointer_button_names = {{"Le
 struct PointerAxisState
 {
 	std::atomic<s32> delta;
+	std::atomic<s32> raw_delta;
 	float last_value;
 };
 static std::array<std::array<float, static_cast<u8>(InputPointerAxis::Count)>, InputManager::MAX_POINTER_DEVICES> s_host_pointer_positions;
 static std::array<std::array<PointerAxisState, static_cast<u8>(InputPointerAxis::Count)>, InputManager::MAX_POINTER_DEVICES>
 	s_pointer_state;
+static std::array<std::atomic<u32>, InputManager::MAX_POINTER_DEVICES> s_pointer_button_state;
 static std::array<float, 2> s_pointer_axis_speed;
 static std::array<float, 2> s_pointer_axis_dead_zone;
 static std::array<float, 2> s_pointer_axis_range;
@@ -637,7 +649,7 @@ void InputManager::AddBindings(const std::vector<std::string>& bindings, const I
 			// INISettingsInterface, can just update directly
 			si.SetStringList(section, key, new_bindings);
 			si.Save();
-		} 
+		}
 		else
 		{
 			// LayeredSettingsInterface, Need to find which layer our binding came from
@@ -866,7 +878,7 @@ void InputManager::AddHotkeyBindings(SettingsInterface& si, bool is_profile)
 	}
 }
 
-void InputManager::AddPadBindings(SettingsInterface& si, u32 pad_index, bool is_profile)
+void InputManager::AddPadBindings(SettingsInterface& si, u32 pad_index, bool is_profile, SettingsInterface* nav_si)
 {
 	const Pad::ControllerType type = EmuConfig.Pad.Ports[pad_index].Type;
 
@@ -905,6 +917,32 @@ void InputManager::AddPadBindings(SettingsInterface& si, u32 pad_index, bool is_
 							Pad::SetControllerState(pad_index, bind_index, ApplySingleBindingScale(sensitivity, deadzone, value));
 						}},
 						bi.bind_type, si, section.c_str(), bi.name, is_profile);
+				}
+
+				// So per-game bindings never affect FullscreenUI navigation.
+				if (nav_si && bi.generic_mapping != GenericInputBinding::Unknown)
+				{
+					for (const std::string& binding_str : nav_si->GetStringList(section.c_str(), bi.name))
+					{
+						InputBindingKey bkey;
+						InputSource* bsrc;
+						if (!ParseBindingAndGetSource(binding_str, &bkey, &bsrc))
+							continue;
+
+						if (bkey.source_subtype == InputSubclass::ControllerButton)
+						{
+							s_controller_button_generic_map.emplace(bkey.MaskDirection(), bi.generic_mapping);
+						}
+						else if (bkey.source_subtype == InputSubclass::ControllerAxis)
+						{
+							auto& entry = s_controller_axis_generic_map[bkey.MaskDirection()];
+							// Negate modifier = negative half of axis (e.g. "-Axis0" → LeftStickLeft)
+							if (bkey.modifier == InputModifier::Negate)
+								entry[0] = bi.generic_mapping;
+							else
+								entry[1] = bi.generic_mapping;
+						}
+					}
 				}
 			}
 			break;
@@ -1071,14 +1109,33 @@ bool InputManager::IsAxisHandler(const InputEventHandler& handler)
 	return std::holds_alternative<InputAxisEventHandler>(handler);
 }
 
-bool InputManager::InvokeEvents(InputBindingKey key, float value, GenericInputBinding generic_key)
+bool InputManager::InvokeEvents(InputBindingKey key, float value, GenericInputBinding generic_key,
+	GenericInputBinding axis_neg_key, GenericInputBinding axis_pos_key)
 {
+	if (key.source_type == InputSourceType::Pointer && key.source_subtype == InputSubclass::PointerButton &&
+		key.source_index < MAX_POINTER_DEVICES && key.data < 32)
+	{
+		const u32 mask = 1u << key.data;
+		if (value > 0.0f)
+			s_pointer_button_state[key.source_index].fetch_or(mask, std::memory_order_release);
+		else
+			s_pointer_button_state[key.source_index].fetch_and(~mask, std::memory_order_release);
+	}
+
 	if (DoEventHook(key, value))
 		return true;
 
 	// If imgui ate the event, don't fire our handlers.
-	const bool skip_button_handlers = PreprocessEvent(key, value, generic_key);
+	const bool skip_button_handlers = PreprocessEvent(key, value, generic_key, axis_neg_key, axis_pos_key);
 	return ProcessEvent(key, value, skip_button_handlers);
+}
+
+bool InputManager::IsPointerButtonPressed(u32 index, u32 button_index)
+{
+	if (index >= MAX_POINTER_DEVICES || button_index >= 32)
+		return false;
+
+	return (s_pointer_button_state[index].load(std::memory_order_acquire) & (1u << button_index)) != 0;
 }
 
 bool InputManager::ProcessEvent(InputBindingKey key, float value, bool skip_button_handlers)
@@ -1258,7 +1315,8 @@ void InputManager::ClearBindStateFromSource(InputBindingKey key)
 	} while (matched);
 }
 
-bool InputManager::PreprocessEvent(InputBindingKey key, float value, GenericInputBinding generic_key)
+bool InputManager::PreprocessEvent(InputBindingKey key, float value, GenericInputBinding generic_key,
+	GenericInputBinding axis_neg_key, GenericInputBinding axis_pos_key)
 {
 	// does imgui want the event?
 	if (key.source_type == InputSourceType::Keyboard)
@@ -1274,11 +1332,46 @@ bool InputManager::PreprocessEvent(InputBindingKey key, float value, GenericInpu
 		if (ImGuiManager::ProcessPointerButtonEvent(key, value))
 			return true;
 	}
-	else if (generic_key != GenericInputBinding::Unknown)
+	else if (key.source_subtype == InputSubclass::ControllerButton)
 	{
-		InputLayout layout = s_input_sources[static_cast<u32>(InputSourceType::SDL)]->GetControllerLayout(key.source_index);
-		if (ImGuiManager::ProcessGenericInputEvent(generic_key, layout, value) && value != 0.0f)
-			return true;
+		// Static table takes priority; falls back to the Shared/global map only if the source has none (e.g. DInput).
+		GenericInputBinding resolved = generic_key;
+		if (resolved == GenericInputBinding::Unknown)
+		{
+			const auto it = s_controller_button_generic_map.find(key.MaskDirection());
+			if (it != s_controller_button_generic_map.end())
+				resolved = it->second;
+		}
+		if (resolved != GenericInputBinding::Unknown)
+		{
+			const u32 controller_id = (static_cast<u32>(key.source_type) << 8) | key.source_index;
+			const InputLayout layout = s_input_sources[static_cast<u32>(key.source_type)]->GetControllerLayout(key.source_index);
+			if (ImGuiManager::ProcessGenericInputEvent(resolved, layout, value, controller_id) && value != 0.0f)
+				return true;
+		}
+	}
+	else if (key.source_subtype == InputSubclass::ControllerAxis)
+	{
+		// Same priority as above; map only fills in directions the source couldn't resolve.
+		GenericInputBinding neg = axis_neg_key;
+		GenericInputBinding pos = axis_pos_key;
+		if (neg == GenericInputBinding::Unknown || pos == GenericInputBinding::Unknown)
+		{
+			const auto it = s_controller_axis_generic_map.find(key.MaskDirection());
+			if (it != s_controller_axis_generic_map.end())
+			{
+				if (neg == GenericInputBinding::Unknown)
+					neg = it->second[0];
+				if (pos == GenericInputBinding::Unknown)
+					pos = it->second[1];
+			}
+		}
+		if (neg != GenericInputBinding::Unknown || pos != GenericInputBinding::Unknown)
+		{
+			const u32 controller_id = (static_cast<u32>(key.source_type) << 8) | key.source_index;
+			const InputLayout layout = s_input_sources[static_cast<u32>(key.source_type)]->GetControllerLayout(key.source_index);
+			ImGuiManager::ProcessGenericAxisEvent(neg, pos, layout, value, controller_id);
+		}
 	}
 
 	return false;
@@ -1294,6 +1387,7 @@ void InputManager::GenerateRelativeMouseEvents()
 
 			PointerAxisState& state = s_pointer_state[device][axis];
 			const float delta = static_cast<float>(state.delta.exchange(0, std::memory_order_acquire)) / 65536.0f;
+			const float raw_delta = static_cast<float>(state.raw_delta.exchange(0, std::memory_order_acquire)) / 65536.0f;
 			float value = 0.0f;
 
 			if (axis <= static_cast<u32>(InputPointerAxis::Y))
@@ -1324,12 +1418,13 @@ void InputManager::GenerateRelativeMouseEvents()
 				ProcessEvent(key, value, false);
 			}
 
-			if (delta != 0.0f)
+			const float callback_delta = (axis <= static_cast<u32>(InputPointerAxis::Y)) ? raw_delta : delta;
+			if (callback_delta != 0.0f)
 			{
 				for (const std::pair<u32, PointerMoveCallback>& pmc : s_pointer_move_callbacks)
 				{
 					if (pmc.first == device)
-						pmc.second(key, delta);
+						pmc.second(key, callback_delta);
 				}
 			}
 		}
@@ -1362,6 +1457,8 @@ void InputManager::UpdatePointerRelativeDelta(u32 index, InputPointerAxis axis, 
 {
 	s_host_pointer_positions[index][static_cast<u8>(axis)] += d;
 	s_pointer_state[index][static_cast<u8>(axis)].delta.fetch_add(static_cast<s32>(d * 65536.0f), std::memory_order_release);
+	if (raw_input)
+		s_pointer_state[index][static_cast<u8>(axis)].raw_delta.fetch_add(static_cast<s32>(d * 65536.0f), std::memory_order_release);
 
 	if (index == 0 && axis <= InputPointerAxis::Y)
 		ImGuiManager::UpdateMousePosition(s_host_pointer_positions[0][0], s_host_pointer_positions[0][1]);
@@ -1454,6 +1551,47 @@ void InputManager::PauseVibration()
 			// we deliberately don't zero the intensity here, so it can resume later
 			motor.last_update_time = 0;
 			motor.source->UpdateMotorState(motor.binding, 0.0f);
+		}
+	}
+}
+
+void InputManager::AddFireWireBindings(SettingsInterface& si, bool is_profile)
+{
+	FireWire::ResetDeviceBindState();
+
+	for (const InputBindingInfo& bi : FireWire::GetSelectedDeviceBindings(si))
+	{
+		const std::string bind_name(FireWire::GetConfigSubKey(si, bi.name));
+		switch (bi.bind_type)
+		{
+			case InputBindingInfo::Type::Button:
+			case InputBindingInfo::Type::Axis:
+			case InputBindingInfo::Type::HalfAxis:
+			{
+				const std::vector<std::string> bindings(si.GetStringList(FireWire::GetConfigSection(), bind_name.c_str()));
+				if (!bindings.empty())
+				{
+					const float sensitivity = si.GetFloatValue(FireWire::GetConfigSection(), fmt::format("{}Scale", bi.name).c_str(), 1.0f);
+					const float deadzone = si.GetFloatValue(FireWire::GetConfigSection(), fmt::format("{}Deadzone", bi.name).c_str(), 0.0f);
+					AddBindings(
+						bindings, InputAxisEventHandler{[bind_index = bi.bind_index, sensitivity, deadzone](InputBindingKey key, float value) {
+							FireWire::SetDeviceBindValue(bind_index, ApplySingleBindingScale(sensitivity, deadzone, value));
+						}},
+						bi.bind_type, si, FireWire::GetConfigSection(), bind_name.c_str(), is_profile);
+				}
+			}
+			break;
+
+			case InputBindingInfo::Type::Keyboard:
+			{
+				s_keyboard_event_callbacks.push_back([base = static_cast<u32>(bi.bind_index)](InputBindingKey key, float value) {
+					FireWire::SetDeviceBindValue(base + key.data, value);
+				});
+			}
+			break;
+
+			default:
+				break;
 		}
 	}
 }
@@ -1557,21 +1695,24 @@ void InputManager::ReloadBindings(SettingsInterface& si, SettingsInterface& bind
 	s_pad_vibration_array.clear();
 	s_keyboard_event_callbacks.clear();
 	s_pointer_move_callbacks.clear();
+	s_controller_button_generic_map.clear();
+	s_controller_axis_generic_map.clear();
 
 	// Hotkeys use the base configuration, except if the custom hotkeys option is enabled.
 	AddHotkeyBindings(hotkey_binding_si, is_hotkey_profile);
 
-	// If there's an input profile, we load pad bindings from it alone, rather than
-	// falling back to the base configuration.
+	// nav_si is always the base config, so per-game profiles can't affect UI navigation.
+	const LayeredSettingsInterface& lsi = static_cast<LayeredSettingsInterface&>(si);
+	SettingsInterface* base_si = lsi.GetLayer(LayeredSettingsInterface::LAYER_BASE);
 	for (u32 pad = 0; pad < Pad::NUM_CONTROLLER_PORTS; pad++)
-		AddPadBindings(binding_si, pad, is_binding_profile);
+		AddPadBindings(binding_si, pad, is_binding_profile, base_si);
 
 	constexpr float ui_ctrl_range = 100.0f;
 	constexpr float pointer_sensitivity = 0.05f;
 	for (u32 axis = 0; axis <= static_cast<u32>(InputPointerAxis::Y); axis++)
 	{
 		s_pointer_axis_speed[axis] = si.GetFloatValue("Pad", fmt::format("Pointer{}Speed", s_pointer_axis_setting_names[axis]).c_str(), 40.0f) /
-									 ui_ctrl_range * pointer_sensitivity;
+		                             ui_ctrl_range * pointer_sensitivity;
 		s_pointer_axis_dead_zone[axis] = std::min(
 			si.GetFloatValue("Pad", fmt::format("Pointer{}DeadZone", s_pointer_axis_setting_names[axis]).c_str(), 20.0f) / ui_ctrl_range, 1.0f);
 		s_pointer_axis_range[axis] = 1.0f - s_pointer_axis_dead_zone[axis];
@@ -1581,6 +1722,7 @@ void InputManager::ReloadBindings(SettingsInterface& si, SettingsInterface& bind
 
 	for (u32 port = 0; port < USB::NUM_PORTS; port++)
 		AddUSBBindings(binding_si, port, is_binding_profile);
+	AddFireWireBindings(binding_si, is_binding_profile);
 
 	UpdateHostMouseMode();
 }

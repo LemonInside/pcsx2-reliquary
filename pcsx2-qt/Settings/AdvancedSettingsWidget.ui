@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>700</width>
-    <height>1100</height>
+    <height>1190</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="_2">
@@ -129,7 +129,7 @@
         </item>
        </widget>
       </item>
-      <item row="3" column="0" colspan="2">
+      <item row="4" column="0" colspan="2">
        <layout class="QGridLayout" name="eeSettingsMisc">
         <item row="1" column="0">
          <widget class="QCheckBox" name="eeWaitLoopDetection">
@@ -180,7 +180,28 @@
           </property>
          </widget>
         </item>
+        <item row="4" column="0">
+         <widget class="QCheckBox" name="eeRAMReadTiming">
+          <property name="text">
+           <string>Enable RAM Read Timing</string>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="1">
+         <widget class="QCheckBox" name="eeInstructionCacheTiming">
+          <property name="text">
+           <string>Enable Instruction Cache Timing</string>
+          </property>
+         </widget>
+        </item>
        </layout>
+      </item>
+      <item row="3" column="0" colspan="2">
+       <widget class="QCheckBox" name="eeSoftFloat">
+        <property name="text">
+         <string>Use Accurate Soft-Float for EE FPU (Slow!)</string>
+        </property>
+       </widget>
       </item>
      </layout>
     </widget>
@@ -191,7 +212,7 @@
       <string extracomment="Vector Unit/VU: refers to two of PS2's processors. Do not translate the full text or do so as a comment. Leave the acronym as-is.">Vector Units (VU)</string>
      </property>
      <layout class="QGridLayout" name="gridLayout_3">
-      <item row="2" column="0">
+      <item row="3" column="0">
        <widget class="QLabel" name="vu1RoundingLabel">
         <property name="text">
          <string>VU1 Rounding Mode:</string>
@@ -225,7 +246,21 @@
         </item>
        </widget>
       </item>
-      <item row="4" column="0" colspan="2">
+      <item row="5" column="0" colspan="2">
+       <widget class="QCheckBox" name="vu1SoftFloat">
+        <property name="text">
+         <string>Use Accurate Soft-Float for VU1 (Slowest!)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="0" colspan="2">
+       <widget class="QCheckBox" name="vu0SoftFloat">
+        <property name="text">
+         <string>Use Accurate Soft-Float for VU0 (Slower!)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="0" colspan="2">
        <layout class="QGridLayout" name="vuSettingsLayout">
         <item row="1" column="0">
          <widget class="QCheckBox" name="vuFlagHack">
@@ -301,7 +336,7 @@
         </property>
        </widget>
       </item>
-      <item row="3" column="0">
+      <item row="4" column="0">
        <widget class="QLabel" name="vu1ClampLabel">
         <property name="text">
          <string>VU1 Clamping Mode:</string>
@@ -311,7 +346,7 @@
         </property>
        </widget>
       </item>
-      <item row="2" column="1">
+      <item row="3" column="1">
        <widget class="QComboBox" name="vu1RoundingMode">
         <item>
          <property name="text">
@@ -335,7 +370,7 @@
         </item>
        </widget>
       </item>
-      <item row="3" column="1">
+      <item row="4" column="1">
        <widget class="QComboBox" name="vu1ClampMode">
         <item>
          <property name="text">
@@ -474,17 +509,12 @@
         </item>
         <item>
          <property name="text">
-          <string>Deflate64</string>
+          <string>Deflate</string>
          </property>
         </item>
         <item>
          <property name="text">
           <string>Zstandard</string>
-         </property>
-        </item>
-        <item>
-         <property name="text">
-          <string>LZMA2</string>
          </property>
         </item>
        </widget>
@@ -550,7 +580,7 @@
         </property>
        </widget>
       </item>
-      <item row="4" column="0">
+      <item row="6" column="0">
        <widget class="QLabel" name="mgKeyStoreModeLabel">
         <property name="text">
          <string>MagicGate Key Store Mode:</string>
@@ -564,7 +594,7 @@
         </property>
        </widget>
       </item>
-      <item row="4" column="1">
+      <item row="6" column="1">
        <widget class="QComboBox" name="mgKeyStoreMode">
         <item>
          <property name="text">
@@ -673,6 +703,54 @@
         </property>
        </widget>
       </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="arcadeKelfOverrideKbitFileLabel">
+        <property name="text">
+         <string>Arcade KELF Override KBIT File:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="QLineEdit" name="arcadeKelfOverrideKbitFile">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="2">
+       <widget class="QPushButton" name="arcadeKelfOverrideKbitBrowse">
+        <property name="text">
+         <string>Browse</string>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="0">
+       <widget class="QLabel" name="arcadeKelfOverrideKcFileLabel">
+        <property name="text">
+         <string>Arcade KELF Override KC File:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="1">
+       <widget class="QLineEdit" name="arcadeKelfOverrideKcFile">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="2">
+       <widget class="QPushButton" name="arcadeKelfOverrideKcBrowse">
+        <property name="text">
+         <string>Browse</string>
+        </property>
+       </widget>
+      </item>
      </layout>
     </widget>
    </item>
@@ -702,6 +780,8 @@
   <tabstop>eeFastmem</tabstop>
   <tabstop>pauseOnTLBMiss</tabstop>
   <tabstop>extraMemory</tabstop>
+  <tabstop>eeRAMReadTiming</tabstop>
+  <tabstop>eeInstructionCacheTiming</tabstop>
   <tabstop>vu0RoundingMode</tabstop>
   <tabstop>vu0ClampMode</tabstop>
   <tabstop>vu1RoundingMode</tabstop>

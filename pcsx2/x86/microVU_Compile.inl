@@ -142,7 +142,9 @@ void doIbit(mV)
 		else
 		{
 			u32 tempI;
-			if (CHECK_VU_OVERFLOW(mVU.index) && ((curI & 0x7fffffff) >= 0x7f800000))
+			// Exact soft-float must classify the unclamped PS2 I-bit operand.
+			if (!CHECK_VU_SOFT(mVU.index) && CHECK_VU_OVERFLOW(mVU.index) &&
+				((curI & 0x7fffffff) >= 0x7f800000))
 			{
 				DevCon.WriteLn(Color_Green, "microVU%d: Clamping I Reg", mVU.index);
 				tempI = (0x80000000 & curI) | 0x7f7fffff; // Clamp I Reg
@@ -871,17 +873,6 @@ void* mVUcompile(microVU& mVU, u32 startPC, uptr pState)
 
 	for (; x < endCount; x++)
 	{
-#if 0
-		if (mVU.index == 1 && (x == 0 || true))
-		{
-			mVU.regAlloc->flushAll(false);
-			mVUbackupRegs(mVU, true);
-			xFastCall(DumpVUState, mVU.index, (xPC) | ((x == 0) ? 0x80000000 : 0));
-			mVUrestoreRegs(mVU, true);
-			//if (xPC == 0x1358) __debugbreak();
-		}
-#endif
-
 		if (mVUinfo.isEOB)
 		{
 			handleBadOp(mVU, x);
@@ -892,7 +883,7 @@ void* mVUcompile(microVU& mVU, u32 startPC, uptr pState)
 			xOR(ptr32[&mVU.regs().flags], VUFLAG_MFLAGSET);
 		}
 
-		if (isVU1 && mVUlow.kickcycles && CHECK_XGKICKHACK)
+		if (isVU1 && mVUlow.kickcycles && CHECK_XGKICKHACK && !mVUlow.deferXgkickSync)
 		{
 			mVU_XGKICK_SYNC(mVU, false);
 		}

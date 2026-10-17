@@ -10,10 +10,12 @@
 #include "DebugTools/DebugInterface.h"
 #include "DebugTools/SymbolImporter.h"
 #include "Elfheader.h"
-#include "FW.h"
+#include "EEMemoryTiming.h"
+#include "FireWire/FireWire.h"
 #include "GS.h"
 #include "GS/Renderers/HW/GSTextureReplacements.h"
 #include "GSDumpReplayer.h"
+#include "GS/GSCapture.h"
 #include "GameDatabase.h"
 #include "GameList.h"
 #include "Host.h"
@@ -39,6 +41,7 @@
 #include "SPU2/spu2.h"
 #include "SupportURLs.h"
 #include "USB/USB.h"
+#include "VUops.h"
 #include "Vif_Dynarec.h"
 #include "VMManager.h"
 #include "ps2/BiosTools.h"
@@ -64,6 +67,7 @@
 #include <atomic>
 #include <mutex>
 #include <sstream>
+#include <common/RedtapeWilCom.h>
 
 #ifdef _WIN32
 #include "common/RedtapeWindows.h"
@@ -102,6 +106,10 @@ namespace VMManager
 	static void LogUnsafeSettingsToConsole(const std::string& messages);
 	static void WarnAboutUnsafeSettings();
 
+	static void ApplyPythonBootParameters(const VMBootParameters& boot_params);
+	static void ApplyPythonDeviceSettings();
+	static bool IsPythonGameFileName(const std::string_view filename);
+	static bool LoadPythonGameBootParameters(const std::string& filename, VMBootParameters* params, Error* error);
 	static bool AutoDetectSource(const std::string& filename, Error* error = nullptr);
 	static void UpdateDiscDetails(bool booting);
 	static void ClearDiscDetails();
@@ -156,6 +164,8 @@ static std::unique_ptr<INISettingsInterface> s_input_settings_interface;
 static bool s_log_block_system_console = false;
 static bool s_log_force_file_log = false;
 
+static std::mutex s_hdd_image_operation_mutex;
+static bool s_hdd_image_operation_active = false;
 static std::atomic<VMState> s_state{VMState::Shutdown};
 static bool s_cpu_implementation_changed = false;
 static Threading::ThreadHandle s_vm_thread_handle;
@@ -170,6 +180,7 @@ static std::string s_disc_version;
 static std::string s_title;
 static std::string s_title_en_search;
 static std::string s_title_en_replace;
+static std::string s_cur_region;
 static u32 s_disc_crc;
 static u32 s_current_crc;
 static u32 s_elf_entry_point = 0xFFFFFFFFu;
@@ -177,12 +188,17 @@ static std::string s_elf_path;
 static std::pair<u32, u32> s_elf_text_range;
 static bool s_elf_executed = false;
 static std::string s_elf_override;
+static std::string s_game_settings_override;
 static std::string s_input_profile_name;
 static u32 s_cdvd_offset = 0;
 static u32 s_frame_advance_count = 0;
 static bool s_fast_boot_requested = false;
 static bool s_gs_open_on_initialize = false;
 static bool s_thread_affinities_set = false;
+
+static bool s_is_python1 = false;
+static u32 s_python1_crc = 0;
+static std::string s_python1_serial;
 
 static bool s_is_python2 = false;
 static u32 s_python2_crc = 0;
@@ -305,6 +321,7 @@ void VMManager::SetState(VMState state)
 		}
 		else
 		{
+			FullscreenUI::OnVMResumed();
 			Host::OnVMResumed();
 			ResetResumeTimestamp();
 		}
@@ -602,6 +619,7 @@ void VMManager::SetDefaultSettings(
 	{
 		Pad::SetDefaultControllerConfig(si);
 		USB::SetDefaultConfiguration(&si);
+		FireWire::SetDefaultConfiguration(&si);
 	}
 	if (hotkeys)
 		Pad::SetDefaultHotkeyConfig(si);
@@ -661,6 +679,7 @@ void VMManager::LoadCoreSettings(SettingsInterface& si)
 	SettingsLoadWrapper slw(si);
 	EmuConfig.LoadSave(slw);
 	Patch::ApplyPatchSettingOverrides();
+	ApplyPythonDeviceSettings();
 
 	// Achievements hardcore mode disallows setting some configuration options.
 	EnforceAchievementsChallengeModeSettings();
@@ -671,7 +690,12 @@ void VMManager::LoadCoreSettings(SettingsInterface& si)
 
 	// Force MTVU off when playing back GS dumps, it doesn't get used.
 	if (GSDumpReplayer::IsReplayingDump())
+	{
 		EmuConfig.Speedhacks.vuThread = false;
+		GSDumpReplayer::SetFrameRange(EmuConfig.GS.DumpReplayUseFrameRange,
+			EmuConfig.GS.DumpReplayFrameStart, EmuConfig.GS.DumpReplayFrameEnd);
+		GSDumpReplayer::SetLoopCount(EmuConfig.GS.DumpReplayLoopCount);
+	}
 }
 
 void VMManager::LoadInputBindings(SettingsInterface& si, std::unique_lock<std::mutex>& lock)
@@ -817,6 +841,10 @@ bool VMManager::ReloadGameSettings()
 
 std::string VMManager::GetGameSettingsPath(const std::string_view game_serial, u32 game_crc)
 {
+	// Game settings override via -gamecfg command line flag
+	if (!s_game_settings_override.empty())
+		return s_game_settings_override;
+
 	std::string sanitized_serial(Path::SanitizeFileName(game_serial));
 
 	return game_serial.empty() ?
@@ -922,30 +950,39 @@ void VMManager::RequestDisplaySize(float scale /*= 0.0f*/)
 		return;
 
 	// scale x not y for aspect ratio
+	const float internal_aspect_ratio = static_cast<float>(iwidth) / static_cast<float>(iheight);
+	const float renderer_aspect_ratio = GSGetDisplayAspectRatio();
 	float x_scale;
-	switch (GSConfig.AspectRatio)
+	if (renderer_aspect_ratio > 0.0f)
 	{
-		case AspectRatioType::RAuto4_3_3_2:
-			if (EmuConfig.CurrentCustomAspectRatio > 0.f)
-				x_scale = EmuConfig.CurrentCustomAspectRatio / (static_cast<float>(iwidth) / static_cast<float>(iheight));
-			else if (GSgetDisplayMode() == GSVideoMode::SDTV_480P)
-				x_scale = (3.0f / 2.0f) / (static_cast<float>(iwidth) / static_cast<float>(iheight));
-			else
-				x_scale = (4.0f / 3.0f) / (static_cast<float>(iwidth) / static_cast<float>(iheight));
-			break;
-		case AspectRatioType::R4_3:
-			x_scale = (4.0f / 3.0f) / (static_cast<float>(iwidth) / static_cast<float>(iheight));
-			break;
-		case AspectRatioType::R16_9:
-			x_scale = (16.0f / 9.0f) / (static_cast<float>(iwidth) / static_cast<float>(iheight));
-			break;
-		case AspectRatioType::R10_7:
-			x_scale = (10.0f / 7.0f) / (static_cast<float>(iwidth) / static_cast<float>(iheight));
-			break;
-		case AspectRatioType::Stretch:
-		default:
-			x_scale = 1.0f;
-			break;
+		x_scale = renderer_aspect_ratio / internal_aspect_ratio;
+	}
+	else
+	{
+		switch (GSConfig.AspectRatio)
+		{
+			case AspectRatioType::RAuto4_3_3_2:
+				if (EmuConfig.CurrentCustomAspectRatio > 0.f)
+					x_scale = EmuConfig.CurrentCustomAspectRatio / internal_aspect_ratio;
+				else if (GSgetDisplayMode() == GSVideoMode::SDTV_480P)
+					x_scale = (3.0f / 2.0f) / internal_aspect_ratio;
+				else
+					x_scale = (4.0f / 3.0f) / internal_aspect_ratio;
+				break;
+			case AspectRatioType::R4_3:
+				x_scale = (4.0f / 3.0f) / internal_aspect_ratio;
+				break;
+			case AspectRatioType::R16_9:
+				x_scale = (16.0f / 9.0f) / internal_aspect_ratio;
+				break;
+			case AspectRatioType::R10_7:
+				x_scale = (10.0f / 7.0f) / internal_aspect_ratio;
+				break;
+			case AspectRatioType::Stretch:
+			default:
+				x_scale = 1.0f;
+				break;
+		}
 	}
 
 	float width = static_cast<float>(iwidth) * x_scale;
@@ -1057,11 +1094,18 @@ void VMManager::UpdateDiscDetails(bool booting)
 			s_disc_crc = GSDumpReplayer::GetDumpCRC();
 			s_disc_elf = {};
 			s_disc_version = {};
+			s_cur_region = "NTSC";
 			serial_is_valid = !s_disc_serial.empty();
 		}
 		else if (CDVDsys_GetSourceType() != CDVD_SourceType::NoDisc)
 		{
-			cdvdGetDiscInfo(&s_disc_serial, &s_disc_elf, &s_disc_version, &s_disc_crc, nullptr);
+			cdvdGetDiscInfo(&s_disc_serial, &s_disc_elf, &s_disc_version, &s_cur_region, &s_disc_crc, nullptr);
+
+			if (cdvd.DiscType == CDVD_TYPE_DVDV && s_disc_serial.empty())
+			{
+				GameList::GetDVDVideoSerialAndCRCForPath(CDVDsys_GetFile(CDVDsys_GetSourceType()), &s_disc_serial, &s_disc_crc);
+				title = Path::GetFileTitle(CDVDsys_GetFile(CDVDsys_GetSourceType()));
+			}
 			serial_is_valid = !s_disc_serial.empty();
 		}
 		else if (!s_elf_override.empty())
@@ -1069,12 +1113,14 @@ void VMManager::UpdateDiscDetails(bool booting)
 			s_disc_serial = Path::GetFileTitle(s_elf_override);
 			s_disc_version = {};
 			s_disc_crc = 0; // set below
+			s_cur_region = "NTSC";
 		}
 		else
 		{
 			s_disc_serial = BiosSerial;
 			s_disc_version = {};
 			s_disc_crc = 0;
+			s_cur_region = (BiosZone == "Europe") ? "PAL" : "NTSC";
 			title = fmt::format(TRANSLATE_FS("VMManager", "PS2 BIOS ({})"), BiosZone);
 		}
 
@@ -1082,7 +1128,12 @@ void VMManager::UpdateDiscDetails(bool booting)
 		if (!s_elf_override.empty())
 			s_disc_crc = cdvdGetElfCRC(s_elf_override);
 
-		if (s_is_python2)
+		if (s_is_python1)
+		{
+			s_disc_crc = s_python1_crc;
+			s_disc_serial = s_python1_serial;
+		}
+		else if (s_is_python2)
 		{
 			s_disc_crc = s_python2_crc;
 			s_disc_serial = s_python2_serial;
@@ -1289,6 +1340,13 @@ bool VMManager::AutoDetectSource(const std::string& filename, Error* error)
 			s_elf_override = filename;
 			return true;
 		}
+		else if (IsPythonGameFileName(filename))
+		{
+			// Python game entries are manifests, not disc images. Initialize() parses
+			// them before auto-detection reaches this safety path.
+			CDVDsys_ChangeSource(CDVD_SourceType::NoDisc);
+			return true;
+		}
 		else
 		{
 			// TODO: Maybe we should check if it's a valid iso here...
@@ -1303,6 +1361,71 @@ bool VMManager::AutoDetectSource(const std::string& filename, Error* error)
 		CDVDsys_ChangeSource(CDVD_SourceType::NoDisc);
 		return true;
 	}
+}
+
+void VMManager::ApplyPythonBootParameters(const VMBootParameters& boot_params)
+{
+	s_is_python1 = boot_params.is_python1.has_value() && boot_params.is_python1.value();
+	if (s_is_python1)
+	{
+		s_python1_crc = boot_params.python1_crc.has_value() ? boot_params.python1_crc.value() : 0;
+		s_python1_serial = boot_params.python1_serial.has_value() ? boot_params.python1_serial.value() : "";
+	}
+	else
+	{
+		s_python1_crc = 0;
+		s_python1_serial = "";
+	}
+
+	s_is_python2 = boot_params.is_python2.has_value() && boot_params.is_python2.value();
+	if (s_is_python2)
+	{
+		s_python2_crc = boot_params.python2_crc.has_value() ? boot_params.python2_crc.value() : 0;
+		s_python2_serial = boot_params.python2_serial.has_value() ? boot_params.python2_serial.value() : "";
+		s_python2_patch_file = boot_params.python2_patch_file.has_value() ? boot_params.python2_patch_file.value() : "";
+	}
+	else
+	{
+		s_python2_crc = 0;
+		s_python2_serial = "";
+		s_python2_patch_file = "";
+	}
+}
+
+void VMManager::ApplyPythonDeviceSettings()
+{
+	FireWire::SetConfigDeviceOverride(s_is_python1 ? "KonamiPython1" : nullptr);
+
+	if (s_is_python2)
+	{
+		EmuConfig.USB.Ports[0].DeviceType = USB::DeviceTypeNameToIndex("python2io");
+		EmuConfig.USB.Ports[0].DeviceSubtype = 0;
+	}
+}
+
+bool VMManager::IsPythonGameFileName(const std::string_view filename)
+{
+	return StringUtil::EndsWithNoCase(filename, ".py1") || StringUtil::EndsWithNoCase(filename, ".py2");
+}
+
+bool VMManager::LoadPythonGameBootParameters(const std::string& filename, VMBootParameters* params, Error* error)
+{
+	if (!FileSystem::FileExists(filename.c_str()))
+	{
+		Error::SetStringFmt(error, TRANSLATE_FS("VMManager", "Requested filename '{}' does not exist."), filename);
+		return false;
+	}
+
+	GameList::Entry entry;
+	if (!GameList::PopulateEntryFromPath(filename, &entry) ||
+		(entry.type != GameList::EntryType::Python1 && entry.type != GameList::EntryType::Python2))
+	{
+		Error::SetStringFmt(error, TRANSLATE_FS("VMManager", "Failed to parse Python game entry file '{}'."), filename);
+		return false;
+	}
+
+	GameList::FillBootParametersForEntry(params, &entry);
+	return true;
 }
 
 void VMManager::PrecacheCDVDFile()
@@ -1358,36 +1481,49 @@ void VMManager::InitializeAsync(
 	done_callback(result, error);
 }
 
+bool VMManager::BeginHddImageOperation(Error* error)
+{
+	std::lock_guard lock(s_hdd_image_operation_mutex);
+	if (s_hdd_image_operation_active || GetState() != VMState::Shutdown)
+	{
+		Error::SetStringView(error, TRANSLATE_SV("VMManager", "Shut down emulation and wait for other HDD operations to finish before modifying an HDD image."));
+		return false;
+	}
+	s_hdd_image_operation_active = true;
+	return true;
+}
+
+void VMManager::EndHddImageOperation()
+{
+	std::lock_guard lock(s_hdd_image_operation_mutex);
+	s_hdd_image_operation_active = false;
+}
+
 VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* error)
 {
 	const Common::Timer init_timer;
-	if (s_state.load(std::memory_order_acquire) != VMState::Shutdown)
 	{
-		Error::SetString(error, TRANSLATE_STR("VMManager", "The virtual machine is already running."));
-		return VMBootResult::StartupFailure;
+		std::lock_guard lock(s_hdd_image_operation_mutex);
+		if (s_state.load(std::memory_order_acquire) != VMState::Shutdown)
+		{
+			Error::SetString(error, TRANSLATE_STR("VMManager", "The virtual machine is already running."));
+			return VMBootResult::StartupFailure;
+		}
+		if (s_hdd_image_operation_active)
+		{
+			Error::SetStringView(error, TRANSLATE_SV("VMManager", "Wait for the HDD image operation to finish before starting emulation."));
+			return VMBootResult::StartupFailure;
+		}
+		s_state.store(VMState::Initializing, std::memory_order_release);
 	}
 
-	s_is_python2 = boot_params.is_python2.has_value() && boot_params.is_python2.value();
-	if (s_is_python2)
-	{
-		// Set parameters for Python 2
-		s_python2_crc = boot_params.python2_crc.has_value() ? boot_params.python2_crc.value() : 0;
-		s_python2_serial = boot_params.python2_serial.has_value() ? boot_params.python2_serial.value() : "";
-		s_python2_patch_file = boot_params.python2_patch_file.has_value() ? boot_params.python2_patch_file.value() : "";
-	}
-	else
-	{
-		s_python2_crc = 0;
-		s_python2_serial = "";
-		s_python2_patch_file = "";
-	}
+	ApplyPythonBootParameters(boot_params);
 
 	// cancel any game list scanning, we need to use CDVD!
 	// TODO: we can get rid of this once, we make CDVD not use globals...
 	// (or make it thread-local, but that seems silly.)
 	Host::CancelGameListRefresh();
 
-	s_state.store(VMState::Initializing, std::memory_order_release);
 	s_vm_thread_handle = Threading::ThreadHandle::GetForCallingThread();
 	Host::OnVMStarting();
 	VMManager::Internal::ResetVMHotkeyState();
@@ -1397,6 +1533,7 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 			GSDumpReplayer::Shutdown();
 
 		s_elf_override = {};
+		s_game_settings_override = {};
 		ClearELFInfo();
 		ClearDiscDetails();
 
@@ -1412,10 +1549,20 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 	};
 
 	std::string state_to_load;
+	VMBootParameters direct_python_boot_params;
+	const bool direct_python_boot = !boot_params.source_type.has_value() && IsPythonGameFileName(boot_params.filename);
 
 	s_elf_override = boot_params.elf_override;
 	if (!boot_params.save_state.empty())
 		state_to_load = boot_params.save_state;
+
+	if (direct_python_boot)
+	{
+		if (!LoadPythonGameBootParameters(boot_params.filename, &direct_python_boot_params, error))
+			return VMBootResult::StartupFailure;
+
+		ApplyPythonBootParameters(direct_python_boot_params);
+	}
 
 	// if we're loading an indexed save state, we need to get the serial/crc from the disc.
 	if (boot_params.state_index.has_value())
@@ -1427,7 +1574,20 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 			return VMBootResult::StartupFailure;
 		}
 
-		state_to_load = GetSaveStateFileName(boot_params.filename.c_str(), boot_params.state_index.value());
+		if (direct_python_boot)
+		{
+			const bool is_python1 = direct_python_boot_params.is_python1.value_or(false);
+			const std::string serial = is_python1 ? direct_python_boot_params.python1_serial.value_or("") :
+				direct_python_boot_params.python2_serial.value_or("");
+			const u32 crc = is_python1 ? direct_python_boot_params.python1_crc.value_or(0) :
+				direct_python_boot_params.python2_crc.value_or(0);
+			state_to_load = GetSaveStateFileName(serial.c_str(), crc, boot_params.state_index.value());
+		}
+		else
+		{
+			state_to_load = GetSaveStateFileName(boot_params.filename.c_str(), boot_params.state_index.value());
+		}
+
 		if (state_to_load.empty())
 		{
 			Error::SetString(error,
@@ -1458,8 +1618,12 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 	}
 	else
 	{
+		if (direct_python_boot)
+		{
+			CDVDsys_ChangeSource(CDVD_SourceType::NoDisc);
+		}
 		// Automatic type detection of boot parameter based on filename.
-		if (!AutoDetectSource(boot_params.filename, error))
+		else if (!AutoDetectSource(boot_params.filename, error))
 			return VMBootResult::StartupFailure;
 	}
 
@@ -1469,7 +1633,7 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 	if (!GSDumpReplayer::IsReplayingDump())
 	{
 		Console.WriteLn("Loading BIOS...");
-		if (!LoadBIOS())
+		if (!LoadBIOS(s_is_python1))
 		{
 			Error::SetStringFmt(error,
 				TRANSLATE_FS("VMManager",
@@ -1493,6 +1657,23 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 		return VMBootResult::StartupFailure;
 	}
 	ScopedGuard close_cdvd(&DoCDVDclose);
+
+	if (!boot_params.game_config.empty())
+	{
+		if (!StringUtil::compareNoCase(Path::GetExtension(boot_params.game_config), "ini"))
+		{
+			Error::SetStringFmt(error,
+				TRANSLATE_FS("VMManager", "Requested game config '{}' is not an INI file."), boot_params.game_config);
+			return VMBootResult::StartupFailure;
+		}
+		else if (!FileSystem::FileExists(boot_params.game_config.c_str()))
+		{
+			Error::SetStringFmt(error,
+				TRANSLATE_FS("VMManager", "Requested game config '{}' does not exist."), boot_params.game_config);
+			return VMBootResult::StartupFailure;
+		}
+		s_game_settings_override = boot_params.game_config;
+	}
 
 	// Figure out which game we're running! This also loads game settings.
 	UpdateDiscDetails(true);
@@ -1679,6 +1860,7 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 	}
 
 	PerformanceMetrics::Clear();
+	MTGS::ResetStats();
 	return VMBootResult::StartupSuccess;
 }
 
@@ -1713,6 +1895,7 @@ void VMManager::Shutdown(bool save_resume_state)
 
 	SaveSessionTime(s_disc_serial);
 	s_elf_override = {};
+	s_game_settings_override = {};
 	ClearELFInfo();
 	CDVDsys_ClearFiles();
 
@@ -1924,7 +2107,12 @@ bool VMManager::HasSaveStateInSlot(const char* game_serial, u32 game_crc, s32 sl
 std::string VMManager::GetCurrentSaveStateFileName(s32 slot, bool backup)
 {
 	std::unique_lock lock(s_info_mutex);
-	return GetSaveStateFileName(s_disc_serial.c_str(), s_disc_crc, slot, backup);
+	std::string serial = s_disc_serial;
+	u32 crc = s_disc_crc;
+	if (serial.empty() && cdvd.DiscType == CDVD_TYPE_DVDV && CDVDsys_GetSourceType() != CDVD_SourceType::NoDisc)
+		GameList::GetDVDVideoSerialAndCRCForPath(CDVDsys_GetFile(CDVDsys_GetSourceType()), &serial, &crc);
+
+	return GetSaveStateFileName(serial.c_str(), crc, slot, backup);
 }
 
 bool VMManager::DoLoadState(const char* filename, Error* error)
@@ -1934,7 +2122,7 @@ bool VMManager::DoLoadState(const char* filename, Error* error)
 		Error::SetString(error, TRANSLATE_STR("VMManager", "Cannot load state while replaying a GS dump."));
 		return false;
 	}
-
+	GSCapture::FlushAudioOnly();
 	Host::OnSaveStateLoading(filename);
 
 	if (!SaveState_UnzipFromDisk(filename, error))
@@ -2302,14 +2490,14 @@ void VMManager::ResetFrameLimiter()
 	s_limiter_frame_start = GetCPUTicks();
 }
 
-void VMManager::Internal::Throttle()
+void VMManager::Internal::Throttle(bool vsync_start)
 {
 	if (s_target_speed == 0.0f || s_use_vsync_for_timing)
 		return;
 
 	const u64 uExpectedEnd =
 		s_limiter_frame_start +
-		s_limiter_ticks_per_frame; // Compute when we would expect this frame to end, assuming everything goes perfectly perfect.
+		(vsync_start ? (s_limiter_ticks_per_frame * 0.9) : s_limiter_ticks_per_frame); // Compute when we would expect this frame to end, assuming everything goes perfectly perfect.
 	const u64 iEnd = GetCPUTicks(); // The current tick we actually stopped on.
 	const s64 sDeltaTime = iEnd - uExpectedEnd; // The diff between when we stopped and when we expected to.
 
@@ -2338,8 +2526,11 @@ void VMManager::Internal::Throttle()
 	{
 	}
 
-	// Finally, set our next frame start to when this one ends
-	s_limiter_frame_start = uExpectedEnd;
+	if (!vsync_start)
+	{
+		// Finally, set our next frame start to when this one ends
+		s_limiter_frame_start = uExpectedEnd;
+	}
 }
 
 void VMManager::Internal::FrameRateChanged()
@@ -2476,7 +2667,7 @@ bool VMManager::IsSaveStateFileName(const std::string_view path)
 
 bool VMManager::IsDiscFileName(const std::string_view path)
 {
-	static const char* extensions[] = {".iso", ".bin", ".img", ".mdf", ".gz", ".cso", ".zso", ".chd", ".py2"};
+	static const char* extensions[] = {".iso", ".bin", ".cue", ".img", ".mdf", ".gz", ".cso", ".zso", ".chd", ".py1", ".py2"};
 
 	for (const char* test_extension : extensions)
 	{
@@ -2529,13 +2720,13 @@ void LogGPUCapabilities()
 {
 	Console.WriteLn(Color_StrongBlack, "Graphics Adapters Detected:");
 #if defined(_WIN32)
-	IDXGIFactory1* pFactory = nullptr;
-	if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&pFactory)))
+	wil::com_ptr_nothrow<IDXGIFactory1> pFactory;
+	if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(pFactory.put()))))
 		return;
 
 	UINT i = 0;
-	IDXGIAdapter* pAdapter = nullptr;
-	while (pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND)
+	wil::com_ptr_nothrow<IDXGIAdapter> pAdapter;
+	while (pFactory->EnumAdapters(i, pAdapter.put()) != DXGI_ERROR_NOT_FOUND)
 	{
 		DXGI_ADAPTER_DESC desc;
 		LARGE_INTEGER umdver;
@@ -2551,21 +2742,12 @@ void LogGPUCapabilities()
 				umdver.QuadPart & 0xFFFF);
 
 			i++;
-			pAdapter->Release();
-			pAdapter = nullptr;
 		}
 		else
 		{
-			pAdapter->Release();
-			pAdapter = nullptr;
-
 			break;
 		}
 	}
-
-	if (pAdapter)
-		pAdapter->Release();
-	pFactory->Release();
 #else
 	// Credits to neofetch for the following (modified) script
 	std::string gpu_script = R"gpu_script(
@@ -2758,7 +2940,7 @@ void VMManager::UpdateCPUImplementations()
 	psxCpu = CHECK_IOPREC ? &psxRec : &psxInt;
 
 	CpuVU0 = EmuConfig.Cpu.Recompiler.EnableVU0 ? static_cast<BaseVUmicroCPU*>(&CpuMicroVU0) : static_cast<BaseVUmicroCPU*>(&CpuIntVU0);
-	CpuVU1 = EmuConfig.Cpu.Recompiler.EnableVU1 ? static_cast<BaseVUmicroCPU*>(&CpuMicroVU1) : static_cast<BaseVUmicroCPU*>(&CpuIntVU1);
+	CpuVU1 = REC_VU1 ? static_cast<BaseVUmicroCPU*>(&CpuMicroVU1) : static_cast<BaseVUmicroCPU*>(&CpuIntVU1);
 #else
 	Cpu = &intCpu;
 	psxCpu = &psxInt;
@@ -2859,6 +3041,11 @@ bool VMManager::Internal::WasFastBooted()
 bool VMManager::Internal::IsFastBootInProgress()
 {
 	return s_fast_boot_requested && !HasBootedELF();
+}
+
+std::string VMManager::Internal::GetCurrentRegion()
+{
+	return s_cur_region;
 }
 
 void VMManager::Internal::DisableFastBoot()
@@ -2997,7 +3184,13 @@ void VMManager::CheckForCPUConfigChanges(const Pcsx2Config& old_config)
 	}
 
 	Console.WriteLn("Updating CPU configuration...");
+	if (EmuConfig.Cpu.EnableEEInstructionCacheTiming != old_config.Cpu.EnableEEInstructionCacheTiming)
+		EEMemoryTiming::ResetInstructionCache();
 	FPControlRegister::SetCurrent(EmuConfig.Cpu.FPUFPCR);
+	if (EmuConfig.Cpu.VU0SoftFloat != old_config.Cpu.VU0SoftFloat)
+		VU0.accflag = 0;
+	if (EmuConfig.Cpu.VU1SoftFloat != old_config.Cpu.VU1SoftFloat)
+		VU1.accflag = 0;
 	Internal::ClearCPUExecutionCaches();
 	memBindConditionalHandlers();
 
@@ -3286,7 +3479,7 @@ void VMManager::WarnAboutUnsafeSettings()
 			append(ICON_FA_PAINTBRUSH,
 				TRANSLATE_SV("VMManager", "Blending Accuracy is below Basic, this may break effects in some games."));
 		}
-		if (EmuConfig.GS.HWDownloadMode != GSHardwareDownloadMode::Enabled)
+		if (EmuConfig.GS.HWDownloadMode > GSHardwareDownloadMode::EnabledForceFull)
 		{
 			append(ICON_FA_DOWNLOAD,
 				TRANSLATE_SV("VMManager", "Hardware Download Mode is not set to Accurate, this may break rendering in some games."));
@@ -3310,6 +3503,11 @@ void VMManager::WarnAboutUnsafeSettings()
 		{
 			append(ICON_FA_CIRCLE_EXCLAMATION,
 				TRANSLATE_SV("VMManager", "Draw Buffering is enabled, this may result in graphical errors."));
+		}
+		if (EmuConfig.GS.UserHacks_RewriteLargeSTCoords)
+		{
+			append(ICON_FA_CIRCLE_EXCLAMATION,
+				TRANSLATE_SV("VMManager", "Rewrite large ST is enabled, this may reduce performance."));
 		}
 		if (EmuConfig.GS.DumpReplaceableTextures)
 		{

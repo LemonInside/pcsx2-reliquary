@@ -24,6 +24,7 @@
     <Import Condition="$(Configuration.Contains(Devel))" Project="$(SolutionDir)common\vsprops\CodeGen_Devel.props" />
     <Import Condition="$(Configuration.Contains(Release))" Project="$(SolutionDir)common\vsprops\CodeGen_Release.props" />
     <Import Condition="!$(Configuration.Contains(Release))" Project="$(SolutionDir)common\vsprops\IncrementalLinking.props" />
+    <Import Project="$(SolutionDir)common\vsprops\ShaderToCpp.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
@@ -34,11 +35,13 @@
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(DepsIncludeDir)\plutovg;$(DepsIncludeDir)\plutosvg</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(DepsIncludeDir)\SDL3</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(DepsIncludeDir)\freetype2</AdditionalIncludeDirectories>
-      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\include;$(SolutionDir)3rdparty</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\minivhd\src;$(SolutionDir)3rdparty\fatfs\source</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\fmt\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\des</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\winwil\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\libchdr\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\libcdio\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\cubeb\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\imgui\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\simpleini\include</AdditionalIncludeDirectories>
@@ -49,13 +52,13 @@
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\soundtouch\soundtouch</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\discord-rpc\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\jpgd</AdditionalIncludeDirectories>
-      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\ffmpeg\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories Condition="'$(Platform)'=='x64'">%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\glad\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories Condition="'$(Platform)'=='x64'">%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\vulkan\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\d3d12memalloc\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\lzma\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)3rdparty\freesurround\include</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)pcsx2\GS\parallel-gs\gs</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)pcsx2\GS\parallel-gs\analog</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)pcsx2\GS\parallel-gs\Granite\vulkan</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)pcsx2\GS\parallel-gs\Granite\util</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)pcsx2\GS\parallel-gs\Granite\math</AdditionalIncludeDirectories>
@@ -72,7 +75,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>PrecompiledHeader.h</PrecompiledHeaderFile>
       <ForcedIncludeFiles>PrecompiledHeader.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
-      <PreprocessorDefinitions>HAVE_PARALLEL_GS;C4_NO_DEBUG_BREAK;ST_NO_EXCEPTION_HANDLING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>HAVE_PARALLEL_GS;C4_NO_DEBUG_BREAK;ST_NO_EXCEPTION_HANDLING;D3D12MA_USING_DIRECTX_HEADERS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Platform)'!='ARM64'">ENABLE_RAINTEGRATION;ENABLE_OPENGL;ENABLE_VULKAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Platform)'=='x64'">XBYAK_NO_EXCEPTION;ZYCORE_STATIC_BUILD;ZYDIS_STATIC_BUILD;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Platform)'=='ARM64'">VIXL_INCLUDE_TARGET_AARCH64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -80,8 +83,101 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ShaderToCpp Include="..\bin\resources\shaders\vulkan\cas.glsl">
+      <VarName>vulkan_cas</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\vulkan\convert.glsl">
+      <VarName>vulkan_convert</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\vulkan\imgui.glsl">
+      <VarName>vulkan_imgui</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\vulkan\interlace.glsl">
+      <VarName>vulkan_interlace</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\vulkan\merge.glsl">
+      <VarName>vulkan_merge</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\vulkan\present.glsl">
+      <VarName>vulkan_present</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\vulkan\shadeboost.glsl">
+      <VarName>vulkan_shadeboost</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\vulkan\tfx.glsl">
+      <VarName>vulkan_tfx</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\opengl\cas.glsl">
+      <VarName>opengl_cas</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\opengl\convert.glsl">
+      <VarName>opengl_convert</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\opengl\imgui.glsl">
+      <VarName>opengl_imgui</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\opengl\interlace.glsl">
+      <VarName>opengl_interlace</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\opengl\merge.glsl">
+      <VarName>opengl_merge</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\opengl\shadeboost.glsl">
+      <VarName>opengl_shadeboost</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\opengl\tfx_fs.glsl">
+      <VarName>opengl_tfx_fs</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\opengl\tfx_vgs.glsl">
+      <VarName>opengl_tfx_vgs</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\opengl\present.glsl">
+      <VarName>opengl_present</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\dx11\cas.hlsl">
+      <VarName>dx11_cas</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\dx11\convert.fx">
+      <VarName>dx11_convert</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\dx11\interlace.fx">
+      <VarName>dx11_interlace</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\dx11\merge.fx">
+      <VarName>dx11_merge</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\dx11\shadeboost.fx">
+      <VarName>dx11_shadeboost</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\dx11\tfx.fx">
+      <VarName>dx11_tfx</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\dx11\imgui.fx">
+      <VarName>dx11_imgui</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\dx11\present.fx">
+      <VarName>dx11_present</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\common\fxaa.fx">
+      <VarName>common_fxaa</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\common\ffx_a.h">
+      <VarName>common_ffx_a</VarName>
+    </ShaderToCpp>
+    <ShaderToCpp Include="..\bin\resources\shaders\common\ffx_cas.h">
+      <VarName>common_ffx_cas</VarName>
+    </ShaderToCpp>
+    <None Include="..\bin\resources\shaders\common\fxaa.fx" />
+    <None Include="..\bin\resources\shaders\opengl\cas.glsl" />
+    <None Include="..\bin\resources\shaders\opengl\convert.glsl" />
     <None Include="..\bin\resources\shaders\opengl\imgui.glsl" />
+    <None Include="..\bin\resources\shaders\opengl\interlace.glsl" />
+    <None Include="..\bin\resources\shaders\opengl\merge.glsl" />
     <None Include="..\bin\resources\shaders\opengl\present.glsl" />
+    <None Include="..\bin\resources\shaders\opengl\shadeboost.glsl" />
+    <None Include="..\bin\resources\shaders\opengl\tfx_fs.glsl" />
+    <None Include="..\bin\resources\shaders\opengl\tfx_vgs.glsl" />
+    <None Include="..\bin\resources\shaders\vulkan\cas.glsl" />
     <None Include="..\bin\resources\shaders\vulkan\convert.glsl" />
     <None Include="..\bin\resources\shaders\vulkan\imgui.glsl" />
     <None Include="..\bin\resources\shaders\vulkan\interlace.glsl" />
@@ -89,20 +185,14 @@
     <None Include="..\bin\resources\shaders\vulkan\present.glsl" />
     <None Include="..\bin\resources\shaders\vulkan\shadeboost.glsl" />
     <None Include="..\bin\resources\shaders\vulkan\tfx.glsl" />
-    <None Include="..\bin\resources\shaders\opengl\convert.glsl" />
-    <None Include="..\bin\resources\shaders\opengl\interlace.glsl" />
-    <None Include="..\bin\resources\shaders\opengl\merge.glsl" />
-    <None Include="..\bin\resources\shaders\opengl\shadeboost.glsl" />
-    <None Include="..\bin\resources\shaders\opengl\tfx_fs.glsl" />
-    <None Include="..\bin\resources\shaders\opengl\tfx_vgs.glsl" />
     <None Include="..\bin\resources\shaders\dx11\convert.fx" />
-    <None Include="..\bin\resources\shaders\common\fxaa.fx" />
+    <None Include="..\bin\resources\shaders\dx11\imgui.fx" />
     <None Include="..\bin\resources\shaders\dx11\interlace.fx" />
     <None Include="..\bin\resources\shaders\dx11\merge.fx" />
+    <None Include="..\bin\resources\shaders\dx11\present.fx" />
     <None Include="..\bin\resources\shaders\dx11\shadeboost.fx" />
     <None Include="..\bin\resources\shaders\dx11\tfx.fx" />
-    <None Include="..\bin\resources\shaders\dx11\imgui.fx" />
-    <None Include="..\bin\resources\shaders\dx11\present.fx" />
+    <None Include="..\bin\resources\shaders\dx11\cas.hlsl" />
     <None Include="GS\Renderers\Vulkan\VKEntryPoints.inl">
       <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
     </None>
@@ -141,6 +231,7 @@
     <ClCompile Include="CDVD\CDVDdiscReader.cpp" />
     <ClCompile Include="CDVD\CDVDdiscThread.cpp" />
     <ClCompile Include="CDVD\ChdFileReader.cpp" />
+    <ClCompile Include="CDVD\CueFileReader.cpp" />
     <ClCompile Include="CDVD\CsoFileReader.cpp" />
     <ClCompile Include="CDVD\FlatFileReader.cpp" />
     <ClCompile Include="CDVD\GzippedFileReader.cpp" />
@@ -178,7 +269,6 @@
     <ClCompile Include="DEV9\ATA\ATA_Info.cpp" />
     <ClCompile Include="DEV9\ATA\ATA_State.cpp" />
     <ClCompile Include="DEV9\ATA\ATA_Transfer.cpp" />
-    <ClCompile Include="DEV9\ATA\HddChdImage.cpp" />
     <ClCompile Include="DEV9\ATA\HddCreate.cpp" />
     <ClCompile Include="DEV9\DEV9.cpp" />
     <ClCompile Include="DEV9\flash.cpp" />
@@ -260,6 +350,8 @@
     <ClCompile Include="GS\Renderers\Vulkan\vk_mem_alloc.cpp">
       <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="Host\AudioRateController.cpp" />
+    <ClCompile Include="Host\AudioRateResampler.cpp" />
     <ClCompile Include="Host\AudioStream.cpp" />
     <ClCompile Include="Host\CubebAudioStream.cpp" />
     <ClCompile Include="Host\SDLAudioStream.cpp" />
@@ -278,8 +370,10 @@
     <ClCompile Include="GS\parallel-gs\gs\gs_interface.cpp" />
     <ClCompile Include="GS\parallel-gs\gs\gs_renderer.cpp" />
     <ClCompile Include="GS\parallel-gs\gs\gs_util.cpp" />
+    <ClCompile Include="GS\parallel-gs\analog\analog_video.cpp" />
     <ClCompile Include="GS\parallel-gs\gs\page_tracker.cpp" />
     <ClCompile Include="GS\parallel-gs\Granite\vulkan\buffer.cpp" />
+    <ClCompile Include="GS\parallel-gs\Granite\vulkan\breadcrumbs.cpp" />
     <ClCompile Include="GS\parallel-gs\Granite\vulkan\buffer_pool.cpp" />
     <ClCompile Include="GS\parallel-gs\Granite\vulkan\command_buffer.cpp" />
     <ClCompile Include="GS\parallel-gs\Granite\vulkan\command_pool.cpp" />
@@ -303,6 +397,7 @@
     <ClCompile Include="GS\parallel-gs\Granite\vulkan\semaphore_manager.cpp" />
     <ClCompile Include="GS\parallel-gs\Granite\vulkan\shader.cpp" />
     <ClCompile Include="GS\parallel-gs\Granite\vulkan\wsi.cpp" />
+    <ClCompile Include="GS\parallel-gs\Granite\vulkan\wsi_pacer.cpp" />
     <ClCompile Include="GS\parallel-gs\Granite\vulkan\pipeline_cache.cpp" />
     <ClCompile Include="GS\parallel-gs\Granite\vulkan\texture\memory_mapped_texture.cpp" />
     <ClCompile Include="GS\parallel-gs\Granite\vulkan\texture\texture_files.cpp" />
@@ -317,6 +412,8 @@
     <ClCompile Include="GS\parallel-gs\Granite\util\thread_name.cpp" />
     <ClCompile Include="GS\parallel-gs\Granite\util\thread_priority.cpp" />
     <ClCompile Include="GS\parallel-gs\Granite\util\slab_allocator.cpp" />
+    <ClCompile Include="GS\parallel-gs\Granite\math\transforms.cpp" />
+    <ClCompile Include="GS\parallel-gs\Granite\math\muglm\muglm.cpp" />
     <ClCompile Include="GS\Renderers\DX11\D3D.cpp" />
     <ClCompile Include="GS\Renderers\DX12\GSDevice12.cpp" />
     <ClCompile Include="GS\Renderers\DX12\GSTexture12.cpp" />
@@ -337,8 +434,11 @@
     <ClCompile Include="IopGte.cpp" />
     <ClCompile Include="LayeredSettingsInterface.cpp" />
     <ClCompile Include="PINE.cpp" />
-    <ClCompile Include="FW.cpp" />
+    <ClCompile Include="FireWire\deviceproxy.cpp" />
+    <ClCompile Include="FireWire\Devices\KonamiPython1.cpp" />
+    <ClCompile Include="FireWire\FireWire.cpp" />
     <ClCompile Include="PerformanceMetrics.cpp" />
+    <ClCompile Include="PS2Float.cpp" />
     <ClCompile Include="Recording\InputRecording.cpp" />
     <ClCompile Include="Recording\InputRecordingControls.cpp" />
     <ClCompile Include="Recording\InputRecordingFile.cpp" />
@@ -390,6 +490,7 @@
     <ClCompile Include="GS\GSBlock.cpp" />
     <ClCompile Include="GS\GSCapture.cpp" />
     <ClCompile Include="GS\GSClut.cpp" />
+    <ClCompile Include="GS\GSScreenshot.cpp" />
     <ClCompile Include="GS\Renderers\Common\GSDevice.cpp" />
     <ClCompile Include="GS\Renderers\DX11\GSDevice11.cpp" />
     <ClCompile Include="GS\Renderers\OpenGL\GSDeviceOGL.cpp">
@@ -453,6 +554,7 @@
     <ClCompile Include="USB\usb-mic\usb-headset.cpp" />
     <ClCompile Include="USB\usb-mic\usb-mic.cpp" />
     <ClCompile Include="USB\usb-msd\usb-msd.cpp" />
+    <ClCompile Include="USB\usb-perfect-pool-camera\perfect-pool-camera.cpp" />
     <ClCompile Include="USB\usb-pad\lg\lg_ff.cpp" />
     <ClCompile Include="USB\usb-pad\usb-buzz.cpp" />
     <ClCompile Include="USB\usb-pad\usb-gametrak.cpp" />
@@ -471,6 +573,7 @@
     <ClCompile Include="USB\usb-python2\devices\thrilldrive_belt.cpp" />
     <ClCompile Include="USB\usb-python2\devices\thrilldrive_handle.cpp" />
     <ClCompile Include="USB\usb-python2\devices\toysmarch_drumpad.cpp" />
+    <ClCompile Include="USB\usb-python2\ddr-hardware.cpp" />
     <ClCompile Include="USB\usb-python2\usb-python2.cpp" />
     <ClCompile Include="USB\USB.cpp" />
     <ClCompile Include="VMManager.cpp" />
@@ -491,6 +594,10 @@
     <ClCompile Include="HwRead.cpp" />
     <ClCompile Include="HwWrite.cpp" />
     <ClCompile Include="Cache.cpp" />
+    <ClCompile Include="ChdHddImage.cpp" />
+    <ClCompile Include="VhdHddImage.cpp" />
+    <ClCompile Include="HddImageOperations.cpp" />
+    <ClCompile Include="EEMemoryTiming.cpp" />
     <ClCompile Include="Memory.cpp" />
     <ClCompile Include="x86\iR5900Analysis.cpp">
       <ExcludedFromBuild Condition="'$(Platform)'!='x64'">true</ExcludedFromBuild>
@@ -503,6 +610,12 @@
     <ClCompile Include="VUmicro.cpp" />
     <ClCompile Include="VUmicroMem.cpp" />
     <ClCompile Include="x86\microVU.cpp">
+      <ExcludedFromBuild Condition="'$(Platform)'!='x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="x86\microVU_SoftFloatTables.cpp">
+      <ExcludedFromBuild Condition="'$(Platform)'!='x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="x86\microVU_SoftFloatTablesRuntime.cpp">
       <ExcludedFromBuild Condition="'$(Platform)'!='x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="VU0.cpp" />
@@ -651,6 +764,7 @@
     <ClInclude Include="CDVD\CDVDdiscReader.h" />
     <ClInclude Include="CDVD\CsoFileReader.h" />
     <ClInclude Include="CDVD\ChdFileReader.h" />
+    <ClInclude Include="CDVD\CueFileReader.h" />
     <ClInclude Include="CDVD\FlatFileReader.h" />
     <ClInclude Include="CDVD\GzippedFileReader.h" />
     <ClInclude Include="CDVD\IsoReader.h" />
@@ -670,7 +784,6 @@
     <ClInclude Include="DebugTools\SymbolImporter.h" />
     <ClInclude Include="DEV9\AdapterUtils.h" />
     <ClInclude Include="DEV9\ATA\ATA.h" />
-    <ClInclude Include="DEV9\ATA\HddChdImage.h" />
     <ClInclude Include="DEV9\ATA\HddCreate.h" />
     <ClInclude Include="DEV9\DEV9.h" />
     <ClInclude Include="DEV9\InternalServers\DHCP_Logger.h" />
@@ -760,6 +873,8 @@
     <ClInclude Include="GS\Renderers\Vulkan\VKSwapChain.h">
       <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
     </ClInclude>
+    <ClInclude Include="Host\AudioRateController.h" />
+    <ClInclude Include="Host\AudioRateResampler.h" />
     <ClInclude Include="Host\AudioStream.h" />
     <ClInclude Include="Host\AudioStreamTypes.h" />
     <ClInclude Include="ImGui\FullscreenUI.h" />
@@ -792,8 +907,12 @@
     <ClInclude Include="IPU\mpeg2_vlc.h" />
     <ClInclude Include="LayeredSettingsInterface.h" />
     <ClInclude Include="PINE.h" />
-    <ClInclude Include="FW.h" />
+    <ClInclude Include="FireWire\FireWireDevice.h" />
+    <ClInclude Include="FireWire\deviceproxy.h" />
+    <ClInclude Include="FireWire\Devices\KonamiPython1.h" />
+    <ClInclude Include="FireWire\FireWire.h" />
     <ClInclude Include="PerformanceMetrics.h" />
+    <ClInclude Include="PS2Float.h" />
     <ClInclude Include="Recording\InputRecording.h" />
     <ClInclude Include="Recording\InputRecordingControls.h" />
     <ClInclude Include="Recording\InputRecordingFile.h" />
@@ -835,6 +954,7 @@
     <ClInclude Include="GS\GSBlock.h" />
     <ClInclude Include="GS\GSCapture.h" />
     <ClInclude Include="GS\GSClut.h" />
+    <ClInclude Include="GS\GSScreenshot.h" />
     <ClInclude Include="GS\Renderers\Common\GSShaderEnums.h" />
     <ClInclude Include="GS\Renderers\Common\GSDevice.h" />
     <ClInclude Include="GS\Renderers\DX11\GSDevice11.h" />
@@ -920,6 +1040,7 @@
     <ClInclude Include="USB\usb-mic\usb-headset.h" />
     <ClInclude Include="USB\usb-mic\usb-mic.h" />
     <ClInclude Include="USB\usb-msd\usb-msd.h" />
+    <ClInclude Include="USB\usb-perfect-pool-camera\perfect-pool-camera.h" />
     <ClInclude Include="USB\usb-pad\lg\lg_ff.h" />
     <ClInclude Include="USB\usb-pad\usb-buzz.h" />
     <ClInclude Include="USB\usb-pad\usb-gametrak.h" />
@@ -937,6 +1058,7 @@
     <ClInclude Include="USB\usb-python2\devices\thrilldrive_belt.h" />
     <ClInclude Include="USB\usb-python2\devices\thrilldrive_handle.h" />
     <ClInclude Include="USB\usb-python2\devices\toysmarch_drumpad.h" />
+    <ClInclude Include="USB\usb-python2\ddr-hardware.h" />
     <ClInclude Include="USB\usb-python2\usb-python2.h" />
     <ClInclude Include="USB\USB.h" />
     <ClInclude Include="Utilities\AsciiFile.h" />
@@ -946,6 +1068,9 @@
     <ClInclude Include="BuildVersion.h" />
     <ClInclude Include="Common.h" />
     <ClInclude Include="Config.h" />
+    <ClInclude Include="ChdHddImage.h" />
+    <ClInclude Include="VhdHddImage.h" />
+    <ClInclude Include="HddImageOperations.h" />
     <ClInclude Include="SaveState.h" />
     <ClInclude Include="Counters.h" />
     <ClInclude Include="Dmac.h" />
@@ -953,6 +1078,7 @@
     <ClInclude Include="Hw.h" />
     <ClInclude Include="ps2\HwInternal.h" />
     <ClInclude Include="Cache.h" />
+    <ClInclude Include="EEMemoryTiming.h" />
     <ClInclude Include="Memory.h" />
     <ClInclude Include="Vif_Dynarec.h" />
     <ClInclude Include="Vif_HashBucket.h" />
@@ -966,6 +1092,10 @@
     <ClInclude Include="x86\microVU_IR.h" />
     <ClInclude Include="x86\microVU_Misc.h" />
     <ClInclude Include="x86\microVU_Profiler.h" />
+    <ClInclude Include="x86\microVU_SoftFloat.h" />
+    <ClInclude Include="x86\microVU_SoftFloatTables.h" />
+    <ClInclude Include="x86\microVU_UpperSoft.inl" />
+    <ClInclude Include="x86\SoftFloatEmitter.h" />
     <ClInclude Include="x86\R5900_Profiler.h" />
     <ClInclude Include="VUflags.h" />
     <ClInclude Include="VUops.h" />
@@ -981,18 +1111,7 @@
     <ClInclude Include="R5900.h" />
     <ClInclude Include="R5900OpcodeTables.h" />
     <ClInclude Include="COP0.h" />
-    <ClInclude Include="x86\iCOP0.h" />
-    <ClInclude Include="x86\iFPU.h" />
-    <ClInclude Include="x86\iMMI.h" />
     <ClInclude Include="x86\iR5900.h" />
-    <ClInclude Include="x86\iR5900Arit.h" />
-    <ClInclude Include="x86\iR5900AritImm.h" />
-    <ClInclude Include="x86\iR5900Branch.h" />
-    <ClInclude Include="x86\iR5900Jump.h" />
-    <ClInclude Include="x86\iR5900LoadStore.h" />
-    <ClInclude Include="x86\iR5900Move.h" />
-    <ClInclude Include="x86\iR5900MultDiv.h" />
-    <ClInclude Include="x86\iR5900Shift.h" />
     <ClInclude Include="IopBios.h" />
     <ClInclude Include="IopCounters.h" />
     <ClInclude Include="IopDma.h" />
@@ -1050,6 +1169,9 @@
     <ProjectReference Include="$(SolutionDir)3rdparty\libchdr\libchdr.vcxproj">
       <Project>{a0d2b3ad-1f72-4ee3-8b5c-f2c358da35f0}</Project>
     </ProjectReference>
+    <ProjectReference Include="$(SolutionDir)3rdparty\libcdio\libcdio.vcxproj">
+      <Project>{ca84151a-201c-4971-a57b-0bf24a62bed5}</Project>
+    </ProjectReference>
     <ProjectReference Include="$(SolutionDir)3rdparty\cubeb\cubeb.vcxproj">
       <Project>{bf74c473-dc04-44b3-92e8-4145f4e77342}</Project>
     </ProjectReference>
@@ -1089,6 +1211,12 @@
     <ProjectReference Include="..\3rdparty\demangler\demangler.vcxproj">
       <Project>{d31a6dd1-99ca-41d8-a230-1fae913c8989}</Project>
     </ProjectReference>
+    <ProjectReference Include="..\3rdparty\minivhd\minivhd.vcxproj">
+      <Project>{9A84B734-AD69-43F7-8293-CCE4E914003B}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\3rdparty\fatfs\fatfs.vcxproj">
+      <Project>{f45d0ff0-617c-4a12-b1c3-7d716ed8a315}</Project>
+    </ProjectReference>
     <ProjectReference Include="..\3rdparty\ccc\ccc.vcxproj">
       <Project>{2589f8ce-ea77-4b73-911e-64074569795b}</Project>
     </ProjectReference>
@@ -1101,5 +1229,6 @@
   </ItemGroup>
   <Import Condition="$(Configuration.Contains(Debug)) Or $(Configuration.Contains(Devel))" Project="$(SolutionDir)3rdparty\winpixeventruntime\WinPixEventRuntime.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="$(SolutionDir)common\vsprops\ShaderToCpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>

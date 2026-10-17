@@ -55,18 +55,32 @@ if(WIN32)
 	)
 endif(WIN32)
 
+option(BAKE_SHADERS_IN_CPP "Bake shaders into C++ source files" OFF)
+if(BAKE_SHADERS_IN_CPP)
+	include(ShaderToCpp)
+	shader_to_cpp(SHADER_FILES SHADER_FILES_CPP CPP_OUTPUT_DIR)
+	add_custom_target(GeneratedShaders DEPENDS ${SHADER_FILES} ${SHADER_FILES_CPP})
+	add_dependencies(PCSX2 GeneratedShaders)
+	target_compile_definitions(PCSX2_FLAGS INTERFACE BAKE_SHADERS_IN_CPP=1)
+	target_include_directories(PCSX2_FLAGS INTERFACE ${CPP_OUTPUT_DIR})
+endif()
+
 # Main pcsx2 source
 set(pcsx2Sources
 	Achievements.cpp
 	BuildVersion.cpp
 	Cache.cpp
+	ChdHddImage.cpp
 	COP0.cpp
 	COP2.cpp
 	Counters.cpp
 	Dmac.cpp
+	EEMemoryTiming.cpp
 	GameDatabase.cpp
 	Elfheader.cpp
-	FW.cpp
+	FireWire/FireWire.cpp
+	FireWire/deviceproxy.cpp
+	FireWire/Devices/KonamiPython1.cpp
 	FiFo.cpp
 	FPU.cpp
 	GameList.cpp
@@ -75,6 +89,7 @@ set(pcsx2Sources
 	Gif_Unit.cpp
 	GS.cpp
 	GSDumpReplayer.cpp
+	HddImageOperations.cpp
 	Host.cpp
 	Hotkeys.cpp
 	Hw.cpp
@@ -97,6 +112,7 @@ set(pcsx2Sources
 	MTGS.cpp
 	MTVU.cpp
 	Patch.cpp
+	PS2Float.cpp
 	Pcsx2Config.cpp
 	PerformanceMetrics.cpp
 	PrecompiledHeader.cpp
@@ -122,6 +138,7 @@ set(pcsx2Sources
 	SourceLog.cpp
 	SPR.cpp
 	StateWrapper.cpp
+	VhdHddImage.cpp
 	Vif0_Dma.cpp
 	Vif1_Dma.cpp
 	Vif1_MFIFO.cpp
@@ -147,20 +164,26 @@ set(pcsx2Headers
 	Achievements.h
 	BuildVersion.h
 	Cache.h
+	ChdHddImage.h
 	Common.h
 	Config.h
 	COP0.h
 	Counters.h
 	Dmac.h
+	EEMemoryTiming.h
+	FireWire/FireWire.h
+	FireWire/FireWireDevice.h
+	FireWire/deviceproxy.h
+	FireWire/Devices/KonamiPython1.h
 	GameDatabase.h
 	Elfheader.h
-	FW.h
 	GameList.h
 	Gif.h
 	Gif_Unit.h
 	GS.h
 	GSDumpReplayer.h
 	Hardware.h
+	HddImageOperations.h
 	Host.h
 	Hw.h
 	INISettingsInterface.h
@@ -177,6 +200,7 @@ set(pcsx2Headers
 	MTVU.h
 	Memory.h
 	MemoryTypes.h
+	PS2Float.h
 	Patch.h
 	PerformanceMetrics.h
 	PrecompiledHeader.h
@@ -198,6 +222,7 @@ set(pcsx2Headers
 	SPR.h
 	SupportURLs.h
 	StateWrapper.h
+	VhdHddImage.h
 	Vif_Dma.h
 	Vif.h
 	Vif_Unpack.h
@@ -222,6 +247,7 @@ set(pcsx2CDVDSources
 	CDVD/IsoReader.cpp
 	CDVD/OutputIsoFile.cpp
 	CDVD/ChdFileReader.cpp
+	CDVD/CueFileReader.cpp
 	CDVD/CsoFileReader.cpp
 	CDVD/GzippedFileReader.cpp
 	CDVD/ThreadedFileReader.cpp
@@ -236,6 +262,7 @@ set(pcsx2CDVDHeaders
 	CDVD/CDVD_internal.h
 	CDVD/CDVDdiscReader.h
 	CDVD/ChdFileReader.h
+	CDVD/CueFileReader.h
 	CDVD/CsoFileReader.h
 	CDVD/FlatFileReader.h
 	CDVD/GzippedFileReader.h
@@ -289,7 +316,6 @@ set(pcsx2DEV9Sources
 	DEV9/ATA/ATA_Info.cpp
 	DEV9/ATA/ATA_State.cpp
 	DEV9/ATA/ATA_Transfer.cpp
-	DEV9/ATA/HddChdImage.cpp
 	DEV9/ATA/HddCreate.cpp
 	DEV9/InternalServers/DHCP_Logger.cpp
 	DEV9/InternalServers/DHCP_Server.cpp
@@ -329,7 +355,6 @@ set(pcsx2DEV9Sources
 set(pcsx2DEV9Headers
 	DEV9/AdapterUtils.h
 	DEV9/ATA/ATA.h
-	DEV9/ATA/HddChdImage.h
 	DEV9/ATA/HddCreate.h
 	DEV9/DEV9.h
 	DEV9/InternalServers/DHCP_Logger.h
@@ -382,6 +407,8 @@ set(pcsx2USBSources
 	USB/qemu-usb/input-keymap-qcode-to-qnum.cpp
 	USB/qemu-usb/usb-ohci.cpp
 	USB/shared/ringbuffer.cpp
+	USB/usb-perfect-pool-camera/perfect-pool-camera.cpp
+    USB/usb-python2/ddr-hardware.cpp
     USB/usb-python2/usb-python2.cpp
     USB/usb-python2/devices/acio.cpp
     USB/usb-python2/devices/ddr_extio.cpp
@@ -423,6 +450,8 @@ set(pcsx2USBHeaders
 	USB/qemu-usb/queue.h
 	USB/qemu-usb/qusb.h
 	USB/shared/ringbuffer.h
+	USB/usb-perfect-pool-camera/perfect-pool-camera.h
+    USB/usb-python2/ddr-hardware.h
     USB/usb-python2/usb-python2.h
     USB/usb-python2/devices/acio.h
     USB/usb-python2/devices/ddr_extio.h
@@ -515,6 +544,7 @@ set(pcsx2GSSources
 	GS/GSPerfMon.cpp
 	GS/GSPng.cpp
 	GS/GSRingHeap.cpp
+	GS/GSScreenshot.cpp
 	GS/GSState.cpp
 	GS/GSTables.cpp
 	GS/GSUtil.cpp
@@ -554,6 +584,7 @@ set(pcsx2GSHeaders
 	GS/GSPerfMon.h
 	GS/GSPng.h
 	GS/GSRingHeap.h
+	GS/GSScreenshot.h
 	GS/GSState.h
 	GS/GSTables.h
 	GS/GSUtil.h
@@ -624,7 +655,7 @@ if(USE_OPENGL)
 	if(WIN32)
 		list(APPEND pcsx2GSSources GS/Renderers/OpenGL/GLContextWGL.cpp)
 		list(APPEND pcsx2GSHeaders GS/Renderers/OpenGL/GLContextWGL.h)
-		target_link_libraries(PCSX2_FLAGS INTERFACE opengl32.lib WinPixEventRuntime::WinPixEventRuntime)
+		target_link_libraries(PCSX2_FLAGS INTERFACE opengl32.lib)
 	else()
 		if(X11_API OR WAYLAND_API)
 			list(APPEND pcsx2GSSources GS/Renderers/OpenGL/GLContextEGL.cpp)
@@ -676,7 +707,7 @@ endif()
 
 if (TARGET parallel-gs)
 	message("Adding support for paraLLEl-GS")
-	target_link_libraries(PCSX2_FLAGS INTERFACE parallel-gs)
+	target_link_libraries(PCSX2_FLAGS INTERFACE parallel-gs analog-video)
 	target_compile_definitions(PCSX2_FLAGS INTERFACE HAVE_PARALLEL_GS)
 	list(APPEND pcsx2GSSources GS/Renderers/parallel-gs/GSRendererPGS.cpp)
 	list(APPEND pcsx2GSHeaders GS/Renderers/parallel-gs/GSRendererPGS.h)
@@ -870,11 +901,15 @@ set(pcsx2DebugToolsHeaders
 	DebugTools/BiosDebugData.h)
 
 set(pcsx2HostSources
+	Host/AudioRateController.cpp
+	Host/AudioRateResampler.cpp
 	Host/AudioStream.cpp
 	Host/CubebAudioStream.cpp
 	Host/SDLAudioStream.cpp)
 
 set(pcsx2HostHeaders
+	Host/AudioRateController.h
+	Host/AudioRateResampler.h
 	Host/AudioStream.h
 	Host/AudioStreamTypes.h)
 
@@ -922,7 +957,7 @@ if(APPLE)
 	)
 endif()
 
-if(WIN32)
+if(WIN32 AND ARCH_X86)
 	# RAIntegration is only supported on Windows.
 	target_compile_definitions(PCSX2_FLAGS INTERFACE ENABLE_RAINTEGRATION)
 	target_link_libraries(PCSX2_FLAGS INTERFACE rainterface)
@@ -1052,21 +1087,10 @@ set(pcsx2x86Sources
 # x86 headers
 set(pcsx2x86Headers
 	x86/BaseblockEx.h
-	x86/iCOP0.h
 	x86/iCore.h
-	x86/iFPU.h
-	x86/iMMI.h
 	x86/iR3000A.h
-	x86/iR5900Arit.h
-	x86/iR5900AritImm.h
-	x86/iR5900Branch.h
 	x86/iR5900.h
 	x86/iR5900Analysis.h
-	x86/iR5900Jump.h
-	x86/iR5900LoadStore.h
-	x86/iR5900Move.h
-	x86/iR5900MultDiv.h
-	x86/iR5900Shift.h
 	x86/microVU_Alloc.inl
 	x86/microVU_Analyze.inl
 	x86/microVU_Branch.inl
@@ -1083,9 +1107,14 @@ set(pcsx2x86Headers
 	x86/microVU_Misc.h
 	x86/microVU_Misc.inl
 	x86/microVU_Profiler.h
+	x86/microVU_SoftFloat.h
+	x86/microVU_SoftFloatTables.h
+	x86/microVU_SoftFloatTablesRuntime.cpp
 	x86/microVU_Tables.inl
 	x86/microVU_Upper.inl
+	x86/microVU_UpperSoft.inl
 	x86/newVif.h
+	x86/SoftFloatEmitter.h
 	x86/Vif_UnpackSSE.h
 	x86/R5900_Profiler.h
 	)
@@ -1133,6 +1162,17 @@ if(LTO_PCSX2_CORE)
 	fixup_file_properties(PCSX2_LTO)
 else()
 	target_sources(PCSX2 PRIVATE ${pcsx2LTOSources})
+endif()
+
+# Keep the generated correction tables out of LTO and the precompiled-header pipeline
+if(ARCH_X86)
+	set_source_files_properties(x86/microVU_SoftFloatTables.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+	if(MSVC AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+		set_source_files_properties(x86/microVU_SoftFloatTables.cpp PROPERTIES COMPILE_OPTIONS "/GL-")
+	else()
+		set_source_files_properties(x86/microVU_SoftFloatTables.cpp PROPERTIES COMPILE_OPTIONS "-fno-lto")
+	endif()
+	target_sources(PCSX2 PRIVATE x86/microVU_SoftFloatTables.cpp)
 endif()
 
 # common Sources
@@ -1194,9 +1234,12 @@ target_link_libraries(PCSX2_FLAGS INTERFACE
 	imgui
 	fmt::fmt
 	libchdr
+	minivhd
+	libcdio::libcdio
 	libzip::zip
 	cpuinfo
 	cubeb
+	fatfs
 	rcheevos
 	discord-rpc
 	simpleini
@@ -1220,6 +1263,7 @@ target_link_libraries(PCSX2_FLAGS INTERFACE
 if(WIN32)
 	target_link_libraries(PCSX2_FLAGS INTERFACE
 		WIL::WIL
+		WinPixEventRuntime::WinPixEventRuntime
 		D3D12MemAlloc
 		setupapi.lib
 		ws2_32.lib
@@ -1231,6 +1275,7 @@ if(WIN32)
 		hid.lib
 		PowrProf.lib
 		d3dcompiler.lib
+		dxcompiler.lib
 		d3d11.lib
 		d3d12.lib
 		dxgi.lib
@@ -1247,6 +1292,9 @@ else()
 endif()
 
 # additonal include directories
+if(WIN32)
+	target_include_directories(PCSX2 PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty")
+endif()
 if(ARCH_X86)
 	target_include_directories(PCSX2_FLAGS INTERFACE "${CMAKE_SOURCE_DIR}/3rdparty/xbyak")
 	target_compile_definitions(PCSX2_FLAGS INTERFACE XBYAK_NO_EXCEPTION)
@@ -1256,7 +1304,6 @@ target_include_directories(PCSX2_FLAGS INTERFACE
 	"${CMAKE_BINARY_DIR}/pcsx2"
 	"${CMAKE_BINARY_DIR}/common/include"
 	"${FFMPEG_INCLUDE_DIRS}"
-	"${CMAKE_SOURCE_DIR}/3rdparty/des/"
 )
 
 set_source_files_properties(PrecompiledHeader.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
@@ -1319,7 +1366,7 @@ function(setup_main_executable target)
 		if("${file}" MATCHES "^\\.") # Don't copy macOS garbage (mainly Finder's .DS_Store files) into application
 			continue()
 		endif()
-		if (NOT WIN32 AND "${path}" MATCHES "/dx11/") # Don't include unneccessary stuff
+		if (NOT WIN32 AND "${path}" MATCHES "/dx11/") # Don't include unnecessary stuff
 			continue()
 		endif()
 		if (NOT BUNDLE_EMOJI_FONT AND "${path}" MATCHES "fonts/Twemoji")
@@ -1355,8 +1402,12 @@ function(setup_main_executable target)
 		endif()
 
 		# Copy dependency libraries.
-		set(DEPS_BINDIR "${CMAKE_SOURCE_DIR}/deps/bin")
-		set(DEPS_TO_COPY freetype.dll harfbuzz.dll jpeg62.dll libpng16.dll libsharpyuv.dll libwebp.dll libwebpdemux.dll libwebpmux.dll lz4.dll libusb-1.0.dll SDL3.dll shaderc_shared.dll z.dll zstd.dll plutovg.dll plutosvg.dll ryml.dll)
+		if(ARCH_ARM64)
+			set(DEPS_BINDIR "${CMAKE_SOURCE_DIR}/deps-arm64/bin")
+		else()
+			set(DEPS_BINDIR "${CMAKE_SOURCE_DIR}/deps/bin")
+		endif()
+		set(DEPS_TO_COPY freetype.dll harfbuzz.dll jpeg62.dll libpng16.dll libsharpyuv.dll libwebp.dll libwebpdemux.dll libwebpmux.dll lz4.dll libusb-1.0.dll SDL3.dll shaderc_shared.dll z.dll zstd.dll plutovg.dll plutosvg.dll ryml.dll dxcompiler.dll)
 		set(DEPS_TO_COPY
 			$<IF:$<CONFIG:Debug>,kddockwidgets-qt6d.dll,kddockwidgets-qt6.dll>
 			${DEPS_TO_COPY}
@@ -1365,10 +1416,17 @@ function(setup_main_executable target)
 			install(FILES "${DEPS_BINDIR}/${DEP_TO_COPY}" DESTINATION "${CMAKE_SOURCE_DIR}/bin")
 		endforeach()
 
-		set(OPT_DEPS_TO_COPY avcodec-62.dll avformat-62.dll avutil-60.dll swresample-6.dll swscale-9.dll)
-		foreach(OPT_DEP_TO_COPY ${OPT_DEPS_TO_COPY})
-			install(FILES "${DEPS_BINDIR}/${OPT_DEP_TO_COPY}" DESTINATION "${CMAKE_SOURCE_DIR}/bin" OPTIONAL)
-		endforeach()
+		file(GLOB OPT_DEPS_FULL_PATHS
+			"${DEPS_BINDIR}/avcodec-*.dll"
+			"${DEPS_BINDIR}/avformat-*.dll"
+			"${DEPS_BINDIR}/avutil-*.dll"
+			"${DEPS_BINDIR}/swscale-*.dll"
+			"${DEPS_BINDIR}/swresample-*.dll"
+		)
+		install(FILES ${OPT_DEPS_FULL_PATHS} DESTINATION "${CMAKE_SOURCE_DIR}/bin" OPTIONAL)
+
+		set(OPT_DEPS_TO_COPY ${OPT_DEPS_FULL_PATHS})
+		list(TRANSFORM OPT_DEPS_TO_COPY REPLACE "^.*/" "")
 
 		set(SYMBOLS_TO_COPY ${DEPS_TO_COPY} ${OPT_DEPS_TO_COPY})
 		list(TRANSFORM SYMBOLS_TO_COPY REPLACE "[.]dll" ".pdb")
@@ -1376,14 +1434,17 @@ function(setup_main_executable target)
 			install(FILES "${DEPS_BINDIR}/${SYMBOL_TO_COPY}" DESTINATION "${CMAKE_SOURCE_DIR}/bin" OPTIONAL)
 		endforeach()
 
-		set(AGILITY_DIR "${CMAKE_SOURCE_DIR}/deps/bin/D3D12")
 		set(AGILITY_DEPS_TO_COPY D3D12Core.dll d3d12SDKLayers.dll)
 		foreach(AGILITY_DEP_TO_COPY ${AGILITY_DEPS_TO_COPY})
 			install(FILES "${DEPS_BINDIR}/D3D12/${AGILITY_DEP_TO_COPY}" DESTINATION "${CMAKE_SOURCE_DIR}/bin/D3D12" OPTIONAL)
 		endforeach()
 
 		get_target_property(WINDEPLOYQT_EXE Qt6::windeployqt IMPORTED_LOCATION)
-		install(CODE "execute_process(COMMAND \"${WINDEPLOYQT_EXE}\" \"${CMAKE_SOURCE_DIR}/bin/$<TARGET_FILE_NAME:${target}>\" --plugindir \"${CMAKE_SOURCE_DIR}/bin/QtPlugins\" --pdb --no-compiler-runtime --no-system-d3d-compiler --no-system-dxc-compiler --no-translations COMMAND_ERROR_IS_FATAL ANY)")
+		set(DEPS_QT_PATH)
+		if (ARCH_ARM64)
+			set(DEPS_QT_PATH "--qtpaths \"${DEPS_BINDIR}/qtpaths.bat\"")
+		endif()
+		install(CODE "execute_process(COMMAND \"${WINDEPLOYQT_EXE}\" \"${CMAKE_SOURCE_DIR}/bin/$<TARGET_FILE_NAME:${target}>\" --plugindir \"${CMAKE_SOURCE_DIR}/bin/QtPlugins\" ${DEPS_QT_PATH} --pdb --no-compiler-runtime --no-system-d3d-compiler --no-system-dxc-compiler --no-translations --no-network COMMAND_ERROR_IS_FATAL ANY)")
 		install(CODE "file(WRITE \"${CMAKE_SOURCE_DIR}/bin/qt.conf\" \"[Paths]\\nPlugins = ./QtPlugins\")")
 	endif()
 
@@ -1483,7 +1544,8 @@ function(setup_main_executable target)
 	endif()
 
 	if(ENABLE_SETCAP AND UNIX AND NOT APPLE)
-		message(WARNING "Networking capabilities enabled, building will require temporary root elevation.")
+		message(WARNING "Networking capabilities enabled on the main executable, building will require temporary root elevation.")
+		message(WARNING "File capabilities can disable LD_PRELOAD-based integrations such as the Steam overlay and Steam Input.")
 		add_custom_target(
 			pcsx2-enable-setcap
 			ALL

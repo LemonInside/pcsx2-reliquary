@@ -9,9 +9,12 @@
 #include "common/FPControl.h"
 
 #include <array>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 #include <optional>
 #include <vector>
+#include <utility>
 
 // Macro used for removing some of the redtape involved in defining bitfield/union helpers.
 //
@@ -403,9 +406,8 @@ enum class GSDumpCompressionMethod : u8
 enum class SavestateCompressionMethod : u8
 {
 	Uncompressed = 0,
-	Deflate64 = 1,
-	Zstandard = 2,
-	LZMA2 = 3
+	Deflate = 1,
+	Zstandard = 2
 };
 
 enum class SavestateCompressionLevel : u8
@@ -419,6 +421,7 @@ enum class SavestateCompressionLevel : u8
 enum class GSHardwareDownloadMode : u8
 {
 	Enabled,
+	EnabledForceFull,
 	NoReadbacks,
 	Unsynchronized,
 	Disabled
@@ -704,7 +707,12 @@ struct Pcsx2Config
 	{
 		BITFIELD32()
 		bool
-			ExtraMemory : 1;
+			ExtraMemory : 1,
+			EnableEERAMReadTiming : 1,
+			EnableEEInstructionCacheTiming : 1,
+			FPUSoftFloat : 1,
+			VU0SoftFloat : 1,
+			VU1SoftFloat : 1;
 		BITFIELD_END
 
 		RecompilerOptions Recompiler;
@@ -787,11 +795,13 @@ struct Pcsx2Config
 					PCRTCOverscan : 1,
 					IntegerScaling : 1,
 					UseDebugDevice : 1,
+					UseDebugBlend : 1,
 					UseBlitSwapChain : 1,
 					DisableShaderCache : 1,
 					DisableFramebufferFetch : 1,
 					DisableVertexShaderExpand : 1,
 					SkipDuplicateFrames : 1,
+					AdvancedFrameDisplay : 1,
 					OsdShowSpeed : 1,
 					OsdShowFPS : 1,
 					OsdShowVPS : 1,
@@ -800,6 +810,7 @@ struct Pcsx2Config
 					OsdShowCPU : 1,
 					OsdShowGPU : 1,
 					OsdShowGPUDebug : 1,
+					OsdShowGPUStats : 1,
 					OsdShowIndicators : 1,
 					OsdShowFrameTimes : 1,
 					OsdShowHardwareInfo : 1,
@@ -818,8 +829,11 @@ struct Pcsx2Config
 					PreloadFrameWithGSData : 1,
 					Mipmap : 1,
 					HWMipmap : 1,
-					HWAccurateAlphaTest: 1,
+					HWAccurateAlphaTest : 1,
 					HWAA1 : 1,
+					HWROV : 1,
+					HWROVLogging : 1,
+					HWROVBarriersVK : 1,
 					ManualUserHacks : 1,
 					UserHacks_AlignSpriteX : 1,
 					UserHacks_CPUFBConversion : 1,
@@ -833,6 +847,8 @@ struct Pcsx2Config
 					UserHacks_NativePaletteDraw : 1,
 					UserHacks_EstimateTextureRegion : 1,
 					UserHacks_DrawBuffering : 1,
+					UserHacks_RewriteLargeSTCoords : 1,
+					UserHacks_TargetPageRearranging : 1,
 					FXAA : 1,
 					ShadeBoost : 1,
 					DumpGSData : 1,
@@ -846,6 +862,7 @@ struct Pcsx2Config
 					SaveDrawStats : 1,
 					SaveFrameStats : 1,
 					SaveHWConfig : 1,
+					DumpReplayUseFrameRange : 1,
 					DumpReplaceableTextures : 1,
 					DumpReplaceableMipmaps : 1,
 					DumpTexturesWithFMVActive : 1,
@@ -924,6 +941,7 @@ struct Pcsx2Config
 		u8 ShadeBoost_Saturation = DEFAULT_SHADEBOOST_SATURATION;
 		u8 ShadeBoost_Gamma = DEFAULT_SHADEBOOST_GAMMA;
 		u8 PNGCompressionLevel = 1;
+
 		u8 PGSSuperSampling = 0;
 		u8 PGSHighResScanout = 0;
 		u8 PGSDisableMipmaps = 0;
@@ -931,6 +949,21 @@ struct Pcsx2Config
 		u8 PGSSuperSampleTextures = 0;
 		u8 PGSSharpBackbuffer = 0;
 		u8 PGSBlendDemotion = 0;
+		u8 PGSTVEmulation = 0;
+		u8 PGSCable = 0;
+		u8 PGSCompositeDecode = 0;
+		u8 PGSDisableAutoProgressive = 0;
+		u8 PGSDisableCRTCEnhancements = 0;
+		u8 PGSPhosphorPrimaries = 0;
+		u8 PGSPhosphorGamma = 0;
+		u8 PGSDisplayCalibration = 0;
+		u16 PGSPaperWhite = 200;
+		u8 PGSHighRefreshInsertion = 0;
+		u8 PGSApertureGrille = 1;
+		u8 PGSPhosphorBloom = 100;
+		u8 PGSExposure = 100;
+		u8 PGSScanlineSharpness = 50;
+		u8 PGSScanlineBreathing = 50;
 
 		u16 SWExtraThreads = 2;
 		u16 SWExtraThreadsHeight = 4;
@@ -941,6 +974,10 @@ struct Pcsx2Config
 		int SaveFrameStart = 0;
 		int SaveFrameCount = -1;
 		int SaveFrameBy = 1;
+		int DumpReplayLoopCount = 0;
+		int DumpReplayFrameStart = 0;
+		int DumpReplayFrameEnd = 0;
+		u32 SavedMetricsCaptureSeconds = 10;
 
 		s8 ExclusiveFullscreenControl = -1;
 		GSScreenshotSize ScreenshotSize = GSScreenshotSize::WindowResolution;
@@ -991,12 +1028,7 @@ struct Pcsx2Config
 
 	struct SPU2Options
 	{
-		enum class SPU2SyncMode : u8
-		{
-			Disabled,
-			TimeStretch,
-			Count
-		};
+		using SPU2SyncMode = AudioSynchronizationMode;
 
 		static constexpr s32 MAX_VOLUME = 200;
 		static constexpr AudioBackend DEFAULT_BACKEND = AudioBackend::Cubeb;
@@ -1038,8 +1070,6 @@ struct Pcsx2Config
 		SPU2Options();
 
 		void LoadSave(SettingsWrapper& wrap);
-
-		bool IsTimeStretchEnabled() const { return (SyncMode == SPU2SyncMode::TimeStretch); }
 
 		bool operator==(const SPU2Options& right) const;
 		bool operator!=(const SPU2Options& right) const;
@@ -1241,6 +1271,7 @@ struct Pcsx2Config
 	struct FilenameOptions
 	{
 		std::string Bios;
+		std::string ArcadeBios;
 
 		FilenameOptions();
 		void LoadSave(SettingsWrapper& wrap);
@@ -1387,6 +1418,8 @@ struct Pcsx2Config
 		std::string MgCardKeyStoreFile;
 		std::string MgEncryptedKeyStoreFile;
 		std::string MgKeyStoreKeyFile;
+		std::string ArcadeKelfOverrideKbitFile;
+		std::string ArcadeKelfOverrideKcFile;
 
 		std::string NvRamFile;
 		std::string ILinkIdFile;
@@ -1487,6 +1520,7 @@ struct Pcsx2Config
 	void ReloadPatchAffectingOptions();
 
 	std::string FullpathToBios() const;
+	std::string FullpathToArcadeBios() const;
 	std::string FullpathToMcd(uint slot) const;
 
 	bool operator==(const Pcsx2Config& right) const = delete;
@@ -1588,10 +1622,14 @@ namespace EmuFolders
 #define CHECK_VU_SIGN_OVERFLOW(vunum) (((vunum) == 0) ? EmuConfig.Cpu.Recompiler.vu0SignOverflow : EmuConfig.Cpu.Recompiler.vu1SignOverflow)
 #define CHECK_VU_UNDERFLOW(vunum) (((vunum) == 0) ? EmuConfig.Cpu.Recompiler.vu0Underflow : EmuConfig.Cpu.Recompiler.vu1Underflow)
 
+#define CHECK_VU_SOFT(vunum) (((vunum) == 0) ? EmuConfig.Cpu.VU0SoftFloat : EmuConfig.Cpu.VU1SoftFloat)
+
 #define CHECK_FPU_OVERFLOW (EmuConfig.Cpu.Recompiler.fpuOverflow)
 #define CHECK_FPU_EXTRA_OVERFLOW (EmuConfig.Cpu.Recompiler.fpuExtraOverflow) // If enabled, Operands are checked for infinities before being used in the FPU recs
 #define CHECK_FPU_EXTRA_FLAGS 1 // Always enabled now // Sets D/I flags on FPU instructions
 #define CHECK_FPU_FULL (EmuConfig.Cpu.Recompiler.fpuFullMode)
+
+#define CHECK_FPU_SOFT (EmuConfig.Cpu.FPUSoftFloat)
 
 //------------ EE Recompiler defines - Comment to disable a recompiler ---------------
 

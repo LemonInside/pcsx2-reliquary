@@ -23,6 +23,7 @@ BIOS
 */
 
 #include "DEV9/DEV9.h"
+#include "EEMemoryTiming.h"
 #include "IopHw.h"
 #include "GS/Renderers/Common/GSFunctionMap.h"
 #include "GS.h"
@@ -139,7 +140,7 @@ void SysMemory::DumpMemoryMap()
 	DUMP_REGION("R5900 Recompiler Cache", s_code_memory, HostMemoryMap::EErecOffset, HostMemoryMap::EErecSize);
 	DUMP_REGION("R3000A Recompiler Cache", s_code_memory, HostMemoryMap::IOPrecOffset, HostMemoryMap::IOPrecSize);
 	DUMP_REGION("Micro VU0 Recompiler Cache", s_code_memory, HostMemoryMap::mVU0recOffset, HostMemoryMap::mVU0recSize);
-	DUMP_REGION("Micro VU0 Recompiler Cache", s_code_memory, HostMemoryMap::mVU1recOffset, HostMemoryMap::mVU1recSize);
+	DUMP_REGION("Micro VU1 Recompiler Cache", s_code_memory, HostMemoryMap::mVU1recOffset, HostMemoryMap::mVU1recSize);
 	DUMP_REGION("VIF0 Unpack Recompiler Cache", s_code_memory, HostMemoryMap::VIF0recOffset, HostMemoryMap::VIF0recSize);
 	DUMP_REGION("VIF1 Unpack Recompiler Cache", s_code_memory, HostMemoryMap::VIF1recOffset, HostMemoryMap::VIF1recSize);
 	DUMP_REGION("VIF Unpack Recompiler Cache", s_code_memory, HostMemoryMap::VIFUnpackRecOffset, HostMemoryMap::VIFUnpackRecSize);
@@ -458,6 +459,11 @@ void memMapKernelMem()
 	vtlb_VMap(0x80000000, 0x00000000, _1mb*512);
 	//0xa* mirror
 	vtlb_VMap(0xA0000000, 0x00000000, _1mb*512);
+	for (u32 addr = 0; addr < Ps2MemSize::ExposedRam; addr += EEMemoryTiming::VIRTUAL_PAGE_SIZE)
+	{
+		EEMemoryTiming::SetPage(0x80000000 + addr, addr, EEMemoryTiming::KSEG0_CACHE_MODE);
+		EEMemoryTiming::SetPage(0xA0000000 + addr, addr, 2);
+	}
 }
 
 //what do do with these ?
@@ -1033,6 +1039,8 @@ void memReset()
 	// we opt for the hard/safe version.
 
 	pxAssume( eeMem );
+	// Keep timing mappings current even when disabled, for runtime settings changes.
+	EEMemoryTiming::Reset(cpuRegs.CP0.n.Config, Ps2MemSize::ExposedRam);
 
 #ifdef ENABLECACHE
 	memset(pCache,0,sizeof(_cacheS)*64);
@@ -1142,6 +1150,8 @@ void memReset()
 
 	vtlb_VMap(0x00000000,0x00000000,0x20000000);
 	vtlb_VMapUnmap(0x20000000,0x60000000);
+	for (u32 addr = 0; addr < Ps2MemSize::ExposedRam; addr += EEMemoryTiming::VIRTUAL_PAGE_SIZE)
+		EEMemoryTiming::SetPage(addr, addr, 3);
 
 	std::memset(s_ba, 0, sizeof(s_ba));
 
@@ -1257,12 +1267,12 @@ bool EEMemoryInterface::Write128(u32 address, u128 value)
 	return true;
 }
 
-bool EEMemoryInterface::WriteBytes(u32 address, void* src, u32 size)
+bool EEMemoryInterface::WriteBytes(u32 address, const void* src, u32 size)
 {
 	return vtlb_memSafeWriteBytes(address, src, size);
 }
 
-bool EEMemoryInterface::CompareBytes(u32 address, void* src, u32 size)
+bool EEMemoryInterface::CompareBytes(u32 address, const void* src, u32 size)
 {
 	return vtlb_memSafeCmpBytes(address, src, size) == 0;
 }
